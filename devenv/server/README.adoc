@@ -1,0 +1,16 @@
+Initially copied from https://github.com/open-telemetry/opentelemetry-js/tree/main/examples/http
+
+== Dev. mode
+
+[source, bash]
+....
+yarn install
+yarn run jaeger:server
+....
+
+== Docker mode
+
+[source, bash]
+....
+docker build . -t spoa/server
+....
