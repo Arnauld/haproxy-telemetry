@@ -11,4 +11,15 @@ docker-compose up -d
 curl http://localhost:7000
 ....
 
-Jaeger UI: http://localhost:16686/
+[cols="1,2"]
+|===
+| Jaeger UI
+| http://localhost:16686/
+
+| HAProxy stats
+| http://localhost:7004/;norefresh
+
+| Rust SPOA
+| :7001
+|===
+
