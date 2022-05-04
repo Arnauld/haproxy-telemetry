@@ -1,0 +1,14 @@
+# HAProxy Telemetry
+
+## Development
+
+Start local haproxy + fake-server + jaeger
+
+[source,bash]
+....
+cd devenv/
+docker-compose up -d
+curl http://localhost:7000
+....
+
+Jaeger UI: http://localhost:16686/

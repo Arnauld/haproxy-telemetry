@@ -6,6 +6,10 @@ services:
   fake-server:
     build:
       context: server/
+    environment:
+      JAEGER_ENDPOINT: 'http://jaeger-all-in-one:14268/api/traces'
+    expose:
+      - "8080"
     ports:
       - "8080:8080"
 
@@ -13,11 +17,12 @@ services:
   jaeger-all-in-one:
     image: jaegertracing/all-in-one:1.33
     ports:
-     # - "5775:5775/udp"
-     # - "6831:6831/udp"
-     # - "6832:6832/udp"
-     # - "5778:5778"
-      - "16686:16686"
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16685:16685" # jaeger-query & ui
+      - "16686:16686" # jaeger-query & ui
       - "14268:14268"
       - "14250:14250"
 
@@ -37,8 +42,11 @@ services:
   # haproxy
   haproxy:
     image: haproxy:2.5.6-alpine
+    depends_on:
+      - fake-server
     volumes:
-      - ./conf/haproxy.cfg:/etc/haproxy/haproxy.conf
-      - 
-  docker run --rm --name haproxy-spoa-example -v $(pwd)/haproxy_conf:/usr/local/etc/haproxy -v $(pwd)/haproxy_run:/var/run -e FE_BIND=unix@/var/run/haproxy.sock --network host haproxy:2.2-rc-alpine haproxy -f /usr/local/etc/haproxy/haproxy.cfg -d -V
-
+      - ./conf/haproxy.conf:/usr/local/etc/haproxy/haproxy.cfg
+      - ./conf/spoe.cfg:/usr/local/etc/haproxy/spoe.cfg
+    ports:
+      - "7000:7000"
+      - "7004:7004"
