@@ -27,9 +27,9 @@ pub enum Frame {
     Ack { header: FrameHeader },
 }
 
-#[repr(u8)]
 #[allow(non_camel_case_types)]
-#[derive(Clone, Debug)]
+#[derive(TryFromPrimitive, Clone, PartialEq, Debug)]
+#[repr(u8)]
 pub enum FrameType {
     UNSET = 0,
     HAPROXY_HELLO = 1,
@@ -98,7 +98,7 @@ pub enum TypedData {
 
 #[derive(TryFromPrimitive, PartialEq, Debug)]
 #[repr(u8)]
-enum TypedDataType {
+pub enum TypedDataType {
     NULL = 0,
     BOOL = 1,
     INT32 = 2,
@@ -122,7 +122,6 @@ pub enum FrameHeaderError {
     InvalidFrameType(u8),
     InvalidStreamId(VarintError),
     InvalidFrameId(VarintError),
-    Other(),
 }
 
 #[derive(Debug)]
@@ -130,7 +129,6 @@ pub enum StringError {
     InsufficientBytes,
     InvalidSize(VarintError),
     Utf8Error(String),
-    Other(),
 }
 
 
@@ -149,14 +147,11 @@ pub enum TypedDataError {
     InsufficientBytes,
     InvalidType(u8),
     InvalidString(StringError),
-    InvalidInt32(u64),
-    InvalidUInt32(u64),
-    InvalidInt64(VarintError),
-    InvalidUInt64(VarintError),
+    NumberConversionError(TypedDataType, u64),
+    NumberParsingError(TypedDataType, VarintError),
     InvalidIpv4(Ipv4Error),
     InvalidIpv6(Ipv6Error),
     NotSupported,
-    Other(),
 }
 
 #[derive(Debug)]
@@ -164,7 +159,6 @@ pub enum KVListError {
     InsufficientBytes,
     InvalidKVListName(StringError),
     InvalidKVListValue(TypedDataError),
-    Other(),
 }
 
 #[derive(Debug)]
@@ -172,7 +166,6 @@ pub enum FramePayloadError {
     InsufficientBytes,
     InvalidKVList(KVListError),
     NotSupported,
-    Other(),
 }
 
 #[derive(Debug)]
@@ -180,7 +173,6 @@ pub enum FrameError {
     InsufficientBytes,
     InvalidFrameHeader(FrameHeaderError),
     InvalidFramePayload(FramePayloadError),
-    Other(),
 }
 
 #[derive(Debug)]
@@ -248,7 +240,7 @@ impl Frame {
 pub fn parse_frame_payload(src: &mut Cursor<&[u8]>, frame_header: &FrameHeader) -> Result<Frame, FramePayloadError> {
     match frame_header.r#type {
         FrameType::HAPROXY_HELLO => {
-            let body = parse_kv_list(src)?;
+            let body = parse_kv_list(src).map_err(|err| FramePayloadError::InvalidKVList(err))?;
             Ok(HAProxyHello {
                 header: frame_header.to_owned(),
                 content: body,
@@ -258,11 +250,11 @@ pub fn parse_frame_payload(src: &mut Cursor<&[u8]>, frame_header: &FrameHeader) 
     }
 }
 
-pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<HashMap::<String, TypedData>, Error> {
+pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<HashMap::<String, TypedData>, KVListError> {
     let mut body = HashMap::<String, TypedData>::new();
     while src.has_remaining() {
-        let name = parse_string(src).map_err(|e| Error::InvalidKVListName)?;
-        let value = parse_typed_data(src).map_err(|e| Error::InvalidKVListValue)?;
+        let name = parse_string(src).map_err(|e| KVListError::InvalidKVListName(e))?;
+        let value = parse_typed_data(src).map_err(|e| KVListError::InvalidKVListValue(e))?;
         body.insert(name, value);
     }
     Ok(body)
@@ -275,22 +267,22 @@ pub fn parse_typed_data(src: &mut Cursor<&[u8]>) -> Result<TypedData, TypedDataE
         TypedDataType::NULL => TypedData::NULL,
         TypedDataType::BOOL => TypedData::BOOL(raw & 0x10_u8 == 0x10_u8),
         TypedDataType::INT32 => {
-            let raw = parse_varint(src)?;
-            let value = i32::try_from(raw).ok_or(TypedDataError::InvalidInt32(raw));
+            let raw = parse_varint(src).map_err(|e| TypedDataError::NumberParsingError(TypedDataType::INT32, e))?;
+            let value = i32::try_from(raw).map_err(|_| TypedDataError::NumberConversionError(TypedDataType::INT32, raw))?;
             TypedData::INT32(value)
         }
         TypedDataType::UINT32 => {
-            let raw = parse_varint(src)?;
-            let value = u32::try_from(raw).ok_or(TypedDataError::InvalidUInt32(raw));
-            TypedData::INT32(value)
+            let raw = parse_varint(src).map_err(|e| TypedDataError::NumberParsingError(TypedDataType::UINT32, e))?;
+            let value = u32::try_from(raw).map_err(|_| TypedDataError::NumberConversionError(TypedDataType::UINT32, raw))?;
+            TypedData::UINT32(value)
         }
         TypedDataType::INT64 => {
-            let raw = parse_varint(src).map_err(|e| TypedDataError::InvalidInt64(e))?;
+            let raw = parse_varint(src).map_err(|e| TypedDataError::NumberParsingError(TypedDataType::INT64, e))?;
             let value = raw as i64;
             TypedData::INT64(value)
         }
         TypedDataType::UINT64 => {
-            let raw = parse_varint(src).map_err(|e| TypedDataError::InvalidUInt64(e))?;
+            let raw = parse_varint(src).map_err(|e| TypedDataError::NumberParsingError(TypedDataType::UINT64, e))?;
             TypedData::UINT64(raw)
         }
         TypedDataType::IPV4 => {
@@ -329,7 +321,7 @@ pub fn parse_typed_data(src: &mut Cursor<&[u8]>) -> Result<TypedData, TypedDataE
             TypedData::STRING(value)
         }
         TypedDataType::BINARY => {
-            Err(TypedDataError::NotSupported)
+            return Err(TypedDataError::NotSupported)
         }
     };
 
@@ -339,16 +331,16 @@ pub fn parse_typed_data(src: &mut Cursor<&[u8]>) -> Result<TypedData, TypedDataE
 pub fn parse_string(src: &mut Cursor<&[u8]>) -> Result<String, StringError> {
     let len = parse_varint(src).map_err(|e| StringError::InvalidSize(e))?;
     let val = if len == 0 {
-        ""
+        "".to_string()
     } else {
-        if len > src.remaining() {
+        let str_len = len as usize;
+        if str_len > src.remaining() {
             return Err(StringError::InsufficientBytes);
         }
-        let str_len = len as usize;
         let bytes = src.copy_to_bytes(str_len);
-        std::str::from_utf8(&bytes[..]).map_err(|e| StringError::Utf8Error(e.to_string()))?
+        std::str::from_utf8(&bytes[..]).map_err(|e| StringError::Utf8Error(e.to_string())).unwrap().to_string()
     };
-    Ok(val.to_string())
+    Ok(val)
 }
 
 pub fn parse_frame_header(src: &mut Cursor<&[u8]>) -> Result<FrameHeader, FrameHeaderError> {
@@ -457,7 +449,6 @@ impl fmt::Display for FrameError {
             FrameError::InsufficientBytes => write!(f, "FrameError::InsufficientBytes"),
             FrameError::InvalidFrameHeader(err) => write!(f, "InvalidFrameHeader {}", err),
             FrameError::InvalidFramePayload(err) => write!(f, "InvalidFramePayload {}", err),
-            FrameError::Other() => write!(f, "FrameError"),
         }
     }
 }
@@ -478,7 +469,6 @@ impl fmt::Display for FrameHeaderError {
             FrameHeaderError::InvalidFrameType(r#type) => write!(f, "InvalidFrameType {}", r#type),
             FrameHeaderError::InvalidStreamId(err) => write!(f, "InvalidStreamId {}", err),
             FrameHeaderError::InvalidFrameId(err) => write!(f, "InvalidStreamId {}", err),
-            FrameHeaderError::Other() => write!(f, "FrameHeaderError::Other"),
         }
     }
 }
@@ -489,7 +479,6 @@ impl fmt::Display for FramePayloadError {
             FramePayloadError::InsufficientBytes => write!(f, "FrameHeaderError::InsufficientBytes"),
             FramePayloadError::InvalidKVList(err) => write!(f, "InvalidKVList {}", err),
             FramePayloadError::NotSupported => write!(f, "FramePayloadError::NotSupported"),
-            FramePayloadError::Other() => write!(f, "FramePayloadError::Other"),
         }
     }
 }
@@ -500,7 +489,6 @@ impl fmt::Display for KVListError {
             KVListError::InsufficientBytes => write!(f, "KVListError::InsufficientBytes"),
             KVListError::InvalidKVListName(err) => write!(f, "InvalidKVListName {}", err),
             KVListError::InvalidKVListValue(err) => write!(f, "InvalidKVListValue {}", err),
-            KVListError::Other() => write!(f, "KVListError::Other"),
         }
     }
 }
@@ -511,7 +499,6 @@ impl fmt::Display for StringError {
             StringError::InsufficientBytes => write!(f, "StringError::InsufficientBytes"),
             StringError::InvalidSize(err) => write!(f, "StringError::InvalidSize {}", err),
             StringError::Utf8Error(err) => write!(f, "StringError::Utf8Error {}", err),
-            StringError::Other() => write!(f, "StringError::Other"),
         }
     }
 }
@@ -522,14 +509,28 @@ impl fmt::Display for TypedDataError {
             TypedDataError::InsufficientBytes => write!(f, "TypedDataError::InsufficientBytes"),
             TypedDataError::InvalidType(r#type) => write!(f, "TypedDataError::InvalidType {}", r#type),
             TypedDataError::InvalidString(err) => write!(f, "TypedDataError::InvalidString {}", err),
-            TypedDataError::InvalidInt32(value) => write!(f, "TypedDataError::InvalidInt32 {}", value),
-            TypedDataError::InvalidUInt32(value) => write!(f, "TypedDataError::InvalidUInt32 {}", value),
-            TypedDataError::InvalidInt64(value) => write!(f, "TypedDataError::InvalidInt64 {}", err),
-            TypedDataError::InvalidUInt64(value) => write!(f, "TypedDataError::InvalidUInt64 {}", err),
             TypedDataError::InvalidIpv4(err) => write!(f, "TypedDataError::InvalidIpv4 {}", err),
             TypedDataError::InvalidIpv6(err) => write!(f, "TypedDataError::InvalidIpv6 {}", err),
-            TypedDataError::NotSupported => write!(f, "TypedDataError::NotSupported {}", err),
-            TypedDataError::Other() => write!(f, "TypedDataError::Other"),
+            TypedDataError::NotSupported => write!(f, "TypedDataError::NotSupported"),
+            TypedDataError::NumberConversionError(data_type, r#u64) => write!(f, "TypedDataError::NumberConversionError ({}, {})", data_type, r#u64),
+            TypedDataError::NumberParsingError(data_type, err) => write!(f, "TypedDataError::InvalidIpv6 ({}, {})", data_type, err),
+        }
+    }
+}
+
+impl fmt::Display for TypedDataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TypedDataType::NULL => write!(f, "NULL"),
+            TypedDataType::BOOL => write!(f, "BOOL"),
+            TypedDataType::INT32 => write!(f, "INT32"),
+            TypedDataType::UINT32 => write!(f, "UINT32"),
+            TypedDataType::INT64 => write!(f, "INT64"),
+            TypedDataType::UINT64 => write!(f, "UINT64"),
+            TypedDataType::IPV4 => write!(f, "IPV4"),
+            TypedDataType::IPV6 => write!(f, "IPV6"),
+            TypedDataType::STRING => write!(f, "STRING"),
+            TypedDataType::BINARY => write!(f, "BINARY"),
         }
     }
 }
