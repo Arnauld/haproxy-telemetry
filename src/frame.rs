@@ -11,6 +11,7 @@ use std::string::FromUtf8Error;
 
 use bytes::Buf;
 use num_enum::TryFromPrimitive;
+use tokio::io::AsyncWriteExt;
 
 const U32_LENGTH: usize = std::mem::size_of::<u32>();
 
@@ -230,8 +231,20 @@ impl Frame {
         parse_frame_payload(src, &frame_header).map_err(|e| Error::InvalidFrame(FrameError::InvalidFramePayload(e)))
     }
 
-    pub fn write_to(&self, dst: &mut Cursor<&[u8]>) -> Result<(), Error> {
-        Ok(())
+    pub fn write_to(&self, dst: &mut Cursor<&mut [u8]>) -> Result<(), Error> {
+        match &self {
+            Frame::AgentHello { header, content } => {
+                let start = dst.position();
+                dst.advance(U32_LENGTH);
+                write_frame_header(dst, header);
+                write_kv_list(dst, content);
+                let end = dst.position();
+                dst.set_position(start);
+                dst.write_u32((end - start) as u32);
+                Ok(())
+            }
+            _ => Err(Error::NotSupported)
+        }
     }
 }
 

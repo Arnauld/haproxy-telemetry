@@ -147,7 +147,7 @@ impl Connection {
     /// full, it is flushed to the underlying socket.
     pub async fn write_frame(&mut self, frame: &Frame) -> Result<(), Error> {
         let mut buff = BytesMut::new();
-        let mut cursor = Cursor::new(&buff[..]);
+        let mut cursor = Cursor::new(&mut buff[..]);
         frame.write_to(&mut cursor);
         let len = cursor.position();
 
