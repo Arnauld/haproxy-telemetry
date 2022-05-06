@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use tokio::net::{TcpListener, TcpStream};
 
 mod connection;
@@ -5,10 +6,7 @@ mod connection;
 pub use connection::Connection;
 
 mod frame;
-
-use frame::{Frame, Error};
-use crate::Frame::Ack;
-use crate::frame::{FrameFlags, FrameHeader, FrameType};
+use frame::{Frame, Error, FrameFlags, FrameHeader, FrameType, TypedData};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,23 +24,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn handle_frame(frame: &Frame) -> Result<Frame, frame::Error> {
+fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
     match frame {
-        Frame::HAProxyHello { header, content } => {
-            Ok(Ack {
+        Frame::HAProxyHello { header, content: _ } => {
+            // TODO: consider provided supported versions...
+            // let supported_versions = content.get("supported-versions").unwrap();
+
+            let mut response_content = HashMap::<String, TypedData>::new();
+            response_content.insert("version".to_string(), TypedData::STRING("2.0".to_string()));
+            response_content.insert("max-frame-size".to_string(), TypedData::UINT32(16380_u32));
+            response_content.insert("capabilities".to_string(), TypedData::STRING("pipelining,async".to_string()));
+
+            Ok(Frame::AgentHello {
                 header: FrameHeader {
                     frame_id: header.frame_id,
                     stream_id: header.stream_id,
                     flags: FrameFlags::new(true, false),
-                    r#type: FrameType::ACK,
-                }
+                    r#type: FrameType::AGENT_HELLO,
+                },
+                content: response_content
             })
         }
         _ => Err(Error::NotSupported)
     }
 }
 
-async fn process(mut socket: TcpStream) {
+async fn process(socket: TcpStream) {
     // The `Connection` lets us read/write redis **frames** instead of
     // byte streams. The `Connection` type is defined by mini-redis.
     let mut connection = Connection::new(socket);

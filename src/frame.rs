@@ -12,8 +12,6 @@ use std::string::FromUtf8Error;
 use bytes::Buf;
 use num_enum::TryFromPrimitive;
 
-use crate::Frame::HAProxyHello;
-
 const U32_LENGTH: usize = std::mem::size_of::<u32>();
 
 /// A frame in the SPOP protocol.
@@ -22,7 +20,7 @@ pub enum Frame {
     HAProxyHello { header: FrameHeader, content: HashMap<String, TypedData> },
     HAProxyDisconnect { header: FrameHeader },
     Notify { header: FrameHeader },
-    AgentHello { header: FrameHeader },
+    AgentHello { header: FrameHeader, content: HashMap<String, TypedData> },
     AgentDisconnect { header: FrameHeader },
     Ack { header: FrameHeader },
 }
@@ -241,7 +239,7 @@ pub fn parse_frame_payload(src: &mut Cursor<&[u8]>, frame_header: &FrameHeader) 
     match frame_header.r#type {
         FrameType::HAPROXY_HELLO => {
             let body = parse_kv_list(src).map_err(|err| FramePayloadError::InvalidKVList(err))?;
-            Ok(HAProxyHello {
+            Ok(Frame::HAProxyHello {
                 header: frame_header.to_owned(),
                 content: body,
             })
@@ -380,22 +378,6 @@ pub fn parse_varint(src: &mut Cursor<&[u8]>) -> Result<u64, VarintError> {
         }
     }
     Ok(res)
-}
-
-fn get_u32(src: &mut Cursor<&[u8]>) -> Result<u32, Error> {
-    if src.remaining() < U32_LENGTH {
-        return Err(Error::Incomplete);
-    }
-
-    Ok(src.get_u32())
-}
-
-fn get_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
-    if !src.has_remaining() {
-        return Err(Error::Incomplete);
-    }
-
-    Ok(src.get_u8())
 }
 
 impl From<String> for Error {

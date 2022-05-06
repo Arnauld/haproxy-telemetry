@@ -154,7 +154,7 @@ impl Connection {
         // rewind
         cursor.set_position(0);
         let bytes = buff.copy_to_bytes(len as usize);
-        self.stream.write_all(bytes.as_ref());
+        self.stream.write_all(bytes.as_ref()).await.map_err(|io| Error::IO(io)).unwrap();
 
         // Ensure the encoded frame is written to the socket. The calls above
         // are to the buffered stream and writes. Calling `flush` writes the
