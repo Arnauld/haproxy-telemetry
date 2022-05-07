@@ -36,7 +36,10 @@ fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
             let mut response_content = HashMap::<String, TypedData>::new();
             response_content.insert("version".to_string(), TypedData::STRING("2.0".to_string()));
             response_content.insert("max-frame-size".to_string(), TypedData::UINT32(16380_u32));
-            response_content.insert("capabilities".to_string(), TypedData::STRING("pipelining,async".to_string()));
+            response_content.insert(
+                "capabilities".to_string(),
+                TypedData::STRING("pipelining,async".to_string()),
+            );
 
             Ok(Frame::AgentHello {
                 header: FrameHeader {
@@ -48,7 +51,10 @@ fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
                 content: response_content,
             })
         }
-        Frame::Notify { header, messages: _ } => {
+        Frame::Notify {
+            header,
+            messages: _,
+        } => {
             let mut actions: Vec<Action> = vec![];
             actions.push(Action::SetVar {
                 scope: ActionVarScope::REQUEST,
@@ -66,12 +72,11 @@ fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
                 actions,
             })
         }
-        Frame::HAProxyDisconnect { header: _, content: _} => {
-            Err(Error::Disconnect)
-        }
-        _ => {
-            Err(Error::NotSupported)
-        }
+        Frame::HAProxyDisconnect {
+            header: _,
+            content: _,
+        } => Err(Error::Disconnect),
+        _ => Err(Error::NotSupported),
     }
 }
 

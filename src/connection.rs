@@ -1,7 +1,7 @@
-use crate::frame::{Frame, Error};
+use crate::frame::{Error, Frame};
 
 use bytes::{Buf, BufMut, BytesMut};
-use std::io::{Cursor};
+use std::io::Cursor;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::TcpStream;
 
@@ -155,7 +155,11 @@ impl Connection {
         full.put_u32(buff.len() as u32);
         full.put_slice(&buff[..]);
 
-        self.stream.write_all(&full[..]).await.map_err(|io| Error::IO(io)).unwrap();
+        self.stream
+            .write_all(&full[..])
+            .await
+            .map_err(|io| Error::IO(io))
+            .unwrap();
 
         println!(">>> {:x?}", &full[..]);
         // reparse to check ;)

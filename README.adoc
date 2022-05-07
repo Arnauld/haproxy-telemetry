@@ -50,13 +50,14 @@ curl http://localhost:7000
 
 | Rust SPOA
 | :7001
+
 |===
 
 ### Start SPOA
 
 [source,bash]
 ....
-cargo run
+RUST_BACKTRACE=1 cargo run
 ....
 
 ## Resources

@@ -1,13 +1,13 @@
 //! Provides a type representing a Redis protocol frame as well as utilities for
 //! parsing frames from a byte array.
 
-use std::{fmt, io};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::Cursor;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::num::TryFromIntError;
 use std::string::FromUtf8Error;
+use std::{fmt, io};
 
 use bytes::{Buf, BufMut, BytesMut};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
@@ -17,12 +17,29 @@ const U32_LENGTH: usize = std::mem::size_of::<u32>();
 /// A frame in the SPOP protocol.
 #[derive(Clone, Debug)]
 pub enum Frame {
-    HAProxyHello { header: FrameHeader, content: HashMap<String, TypedData> },
-    HAProxyDisconnect { header: FrameHeader, content: HashMap<String, TypedData> },
-    Notify { header: FrameHeader, messages: HashMap<String, HashMap<String, TypedData>> },
-    AgentHello { header: FrameHeader, content: HashMap<String, TypedData> },
-    AgentDisconnect { header: FrameHeader },
-    Ack { header: FrameHeader, actions: Vec<Action> },
+    HAProxyHello {
+        header: FrameHeader,
+        content: HashMap<String, TypedData>,
+    },
+    HAProxyDisconnect {
+        header: FrameHeader,
+        content: HashMap<String, TypedData>,
+    },
+    Notify {
+        header: FrameHeader,
+        messages: HashMap<String, HashMap<String, TypedData>>,
+    },
+    AgentHello {
+        header: FrameHeader,
+        content: HashMap<String, TypedData>,
+    },
+    AgentDisconnect {
+        header: FrameHeader,
+    },
+    Ack {
+        header: FrameHeader,
+        actions: Vec<Action>,
+    },
 }
 
 #[derive(IntoPrimitive, TryFromPrimitive, PartialEq, Eq, Clone, Debug)]
@@ -43,7 +60,6 @@ pub enum ActionType {
     SET_VAR = 1,
     UNSET_VAR = 2,
 }
-
 
 #[derive(Clone, Debug)]
 #[allow(non_camel_case_types)]
@@ -78,7 +94,6 @@ impl FrameType {
         Ok(())
     }
 }
-
 
 #[derive(Clone, Debug)]
 pub struct FrameHeader {
@@ -171,7 +186,6 @@ pub enum StringError {
     Utf8Error(String),
 }
 
-
 #[derive(Debug)]
 pub enum Ipv4Error {
     InsufficientBytes,
@@ -247,7 +261,10 @@ pub enum Error {
     Incomplete,
 
     /// Parsing error
-    InvalidCursor { expected: usize, remaining: usize },
+    InvalidCursor {
+        expected: usize,
+        remaining: usize,
+    },
 
     /// Only full payload os supported for now
     FragmentedModeNotSupported,
@@ -288,15 +305,20 @@ impl Frame {
     pub fn parse(src: &mut Cursor<&[u8]>) -> Result<Frame, Error> {
         let len = src.get_u32() as usize;
         if len != src.remaining() {
-            return Err(Error::InvalidCursor { expected: len, remaining: src.remaining() });
+            return Err(Error::InvalidCursor {
+                expected: len,
+                remaining: src.remaining(),
+            });
         }
-        let frame_header: FrameHeader = parse_frame_header(src).map_err(|e| Error::InvalidFrame(FrameError::InvalidFrameHeader(e)))?;
+        let frame_header: FrameHeader = parse_frame_header(src)
+            .map_err(|e| Error::InvalidFrame(FrameError::InvalidFrameHeader(e)))?;
 
         if !frame_header.flags.is_fin() {
             return Err(Error::FragmentedModeNotSupported);
         }
 
-        parse_frame_payload(src, &frame_header).map_err(|e| Error::InvalidFrame(FrameError::InvalidFramePayload(e)))
+        parse_frame_payload(src, &frame_header)
+            .map_err(|e| Error::InvalidFrame(FrameError::InvalidFramePayload(e)))
     }
 
     pub fn write_to(&self, dst: &mut BytesMut) -> Result<(), Error> {
@@ -311,12 +333,15 @@ impl Frame {
                 write_list_of_actions(dst, actions).unwrap();
                 Ok(())
             }
-            _ => Err(Error::NotSupported)
+            _ => Err(Error::NotSupported),
         }
     }
 }
 
-pub fn parse_frame_payload(src: &mut Cursor<&[u8]>, frame_header: &FrameHeader) -> Result<Frame, FramePayloadError> {
+pub fn parse_frame_payload(
+    src: &mut Cursor<&[u8]>,
+    frame_header: &FrameHeader,
+) -> Result<Frame, FramePayloadError> {
     match frame_header.r#type {
         FrameType::HAPROXY_HELLO => {
             let body = parse_kv_list(src).map_err(|err| FramePayloadError::InvalidKVList(err))?;
@@ -340,20 +365,22 @@ pub fn parse_frame_payload(src: &mut Cursor<&[u8]>, frame_header: &FrameHeader) 
             })
         }
         FrameType::NOTIFY => {
-            let body = parse_list_of_messages(src).map_err(|err| FramePayloadError::InvalidListOfMessages(err))?;
+            let body = parse_list_of_messages(src)
+                .map_err(|err| FramePayloadError::InvalidListOfMessages(err))?;
             Ok(Frame::Notify {
                 header: frame_header.to_owned(),
                 messages: body,
             })
         }
         FrameType::ACK => {
-            let body = parse_list_of_actions(src).map_err(|err| FramePayloadError::InvalidListOfActions(err))?;
+            let body = parse_list_of_actions(src)
+                .map_err(|err| FramePayloadError::InvalidListOfActions(err))?;
             Ok(Frame::Ack {
                 header: frame_header.to_owned(),
                 actions: body,
             })
         }
-        _ => Err(FramePayloadError::NotSupported(frame_header.r#type))
+        _ => Err(FramePayloadError::NotSupported(frame_header.r#type)),
     }
 }
 
@@ -387,7 +414,8 @@ pub fn parse_list_of_actions(src: &mut Cursor<&[u8]>) -> Result<Vec<Action>, Lis
     let mut actions: Vec<Action> = vec![];
 
     while src.has_remaining() {
-        let action: Action = parse_action(src).map_err(|err| ListOfActionsError::InvalidAction(err))?;
+        let action: Action =
+            parse_action(src).map_err(|err| ListOfActionsError::InvalidAction(err))?;
         actions.push(action)
     }
     Ok(actions)
@@ -399,28 +427,32 @@ pub fn parse_action(src: &mut Cursor<&[u8]>) -> Result<Action, ActionError> {
     match r#type {
         ActionType::SET_VAR => {
             if nb_args != 3 {
-                Err(ActionError::InvalidNumberOfArgs(ActionType::SET_VAR, nb_args, 3))
+                Err(ActionError::InvalidNumberOfArgs(
+                    ActionType::SET_VAR,
+                    nb_args,
+                    3,
+                ))
             } else {
                 let scope = parse_action_scope(src)?;
-                let name = parse_string(src).map_err(|e| ActionError::InvalidSetVarActionVarName(e))?;
-                let value = parse_typed_data(src).map_err(|e| ActionError::InvalidSetVarActionVarValue(e))?;
-                Ok(Action::SetVar {
-                    scope,
-                    name,
-                    value,
-                })
+                let name =
+                    parse_string(src).map_err(|e| ActionError::InvalidSetVarActionVarName(e))?;
+                let value = parse_typed_data(src)
+                    .map_err(|e| ActionError::InvalidSetVarActionVarValue(e))?;
+                Ok(Action::SetVar { scope, name, value })
             }
         }
         ActionType::UNSET_VAR => {
             if nb_args != 2 {
-                Err(ActionError::InvalidNumberOfArgs(ActionType::SET_VAR, nb_args, 2))
+                Err(ActionError::InvalidNumberOfArgs(
+                    ActionType::SET_VAR,
+                    nb_args,
+                    2,
+                ))
             } else {
                 let scope = parse_action_scope(src)?;
-                let name = parse_string(src).map_err(|e| ActionError::InvalidUnsetVarActionVarName(e))?;
-                Ok(Action::UnsetVar {
-                    scope,
-                    name,
-                })
+                let name =
+                    parse_string(src).map_err(|e| ActionError::InvalidUnsetVarActionVarName(e))?;
+                Ok(Action::UnsetVar { scope, name })
             }
         }
     }
@@ -438,16 +470,20 @@ pub fn parse_action_scope(src: &mut Cursor<&[u8]>) -> Result<ActionVarScope, Act
     Ok(r#type)
 }
 
-pub fn parse_list_of_messages(src: &mut Cursor<&[u8]>) -> Result<HashMap::<String, HashMap::<String, TypedData>>, ListOfMessagesError> {
-    let mut messages = HashMap::<String, HashMap::<String, TypedData>>::new();
+pub fn parse_list_of_messages(
+    src: &mut Cursor<&[u8]>,
+) -> Result<HashMap<String, HashMap<String, TypedData>>, ListOfMessagesError> {
+    let mut messages = HashMap::<String, HashMap<String, TypedData>>::new();
     while src.has_remaining() {
-        let message_name = parse_string(src).map_err(|e| ListOfMessagesError::InvalidMessageName(e))?;
+        let message_name =
+            parse_string(src).map_err(|e| ListOfMessagesError::InvalidMessageName(e))?;
         let nb_args = src.get_u8();
 
         let mut message_content = HashMap::<String, TypedData>::new();
         for _ in 0..nb_args {
             let name = parse_string(src).map_err(|e| ListOfMessagesError::InvalidKVListName(e))?;
-            let value = parse_typed_data(src).map_err(|e| ListOfMessagesError::InvalidKVListValue(e))?;
+            let value =
+                parse_typed_data(src).map_err(|e| ListOfMessagesError::InvalidKVListValue(e))?;
             message_content.insert(name, value);
         }
 
@@ -456,7 +492,7 @@ pub fn parse_list_of_messages(src: &mut Cursor<&[u8]>) -> Result<HashMap::<Strin
     Ok(messages)
 }
 
-pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<HashMap::<String, TypedData>, KVListError> {
+pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<HashMap<String, TypedData>, KVListError> {
     let mut body = HashMap::<String, TypedData>::new();
     while src.has_remaining() {
         let name = parse_string(src).map_err(|e| KVListError::InvalidKVListName(e))?;
@@ -466,7 +502,7 @@ pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<HashMap::<String, TypedD
     Ok(body)
 }
 
-pub fn write_kv_list(dst: &mut BytesMut, hash: &HashMap::<String, TypedData>) -> Result<(), Error> {
+pub fn write_kv_list(dst: &mut BytesMut, hash: &HashMap<String, TypedData>) -> Result<(), Error> {
     for (k, v) in hash {
         write_string(dst, k).unwrap();
         write_typed_data(dst, v).unwrap();
@@ -476,27 +512,34 @@ pub fn write_kv_list(dst: &mut BytesMut, hash: &HashMap::<String, TypedData>) ->
 
 pub fn parse_typed_data(src: &mut Cursor<&[u8]>) -> Result<TypedData, TypedDataError> {
     let raw = src.get_u8();
-    let r#type: TypedDataType = TypedDataType::try_from(raw & 0x0F_u8).map_err(|_| TypedDataError::InvalidType(raw))?;
+    let r#type: TypedDataType =
+        TypedDataType::try_from(raw & 0x0F_u8).map_err(|_| TypedDataError::InvalidType(raw))?;
     let value = match r#type {
         TypedDataType::NULL => TypedData::NULL,
         TypedDataType::BOOL => TypedData::BOOL(raw & 0x10_u8 == 0x10_u8),
         TypedDataType::INT32 => {
-            let raw = parse_varint(src).map_err(|e| TypedDataError::NumberParsingError(TypedDataType::INT32, e))?;
-            let value = i32::try_from(raw).map_err(|_| TypedDataError::NumberConversionError(TypedDataType::INT32, raw))?;
+            let raw = parse_varint(src)
+                .map_err(|e| TypedDataError::NumberParsingError(TypedDataType::INT32, e))?;
+            let value = i32::try_from(raw)
+                .map_err(|_| TypedDataError::NumberConversionError(TypedDataType::INT32, raw))?;
             TypedData::INT32(value)
         }
         TypedDataType::UINT32 => {
-            let raw = parse_varint(src).map_err(|e| TypedDataError::NumberParsingError(TypedDataType::UINT32, e))?;
-            let value = u32::try_from(raw).map_err(|_| TypedDataError::NumberConversionError(TypedDataType::UINT32, raw))?;
+            let raw = parse_varint(src)
+                .map_err(|e| TypedDataError::NumberParsingError(TypedDataType::UINT32, e))?;
+            let value = u32::try_from(raw)
+                .map_err(|_| TypedDataError::NumberConversionError(TypedDataType::UINT32, raw))?;
             TypedData::UINT32(value)
         }
         TypedDataType::INT64 => {
-            let raw = parse_varint(src).map_err(|e| TypedDataError::NumberParsingError(TypedDataType::INT64, e))?;
+            let raw = parse_varint(src)
+                .map_err(|e| TypedDataError::NumberParsingError(TypedDataType::INT64, e))?;
             let value = raw as i64;
             TypedData::INT64(value)
         }
         TypedDataType::UINT64 => {
-            let raw = parse_varint(src).map_err(|e| TypedDataError::NumberParsingError(TypedDataType::UINT64, e))?;
+            let raw = parse_varint(src)
+                .map_err(|e| TypedDataError::NumberParsingError(TypedDataType::UINT64, e))?;
             TypedData::UINT64(raw)
         }
         TypedDataType::IPV4 => {
@@ -603,7 +646,10 @@ pub fn parse_string(src: &mut Cursor<&[u8]>) -> Result<String, StringError> {
             return Err(StringError::InsufficientBytes);
         }
         let bytes = src.copy_to_bytes(str_len);
-        std::str::from_utf8(&bytes[..]).map_err(|e| StringError::Utf8Error(e.to_string())).unwrap().to_string()
+        std::str::from_utf8(&bytes[..])
+            .map_err(|e| StringError::Utf8Error(e.to_string()))
+            .unwrap()
+            .to_string()
     };
     Ok(val)
 }
@@ -641,7 +687,6 @@ pub fn write_frame_header(dst: &mut BytesMut, frame_header: &FrameHeader) -> Res
     write_varint(dst, frame_header.frame_id).unwrap();
     Ok(())
 }
-
 
 pub fn parse_varint(src: &mut Cursor<&[u8]>) -> Result<u64, VarintError> {
     if src.remaining() < 1 {
@@ -713,7 +758,14 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::Incomplete => write!(f, "stream ended early"),
-            Error::InvalidCursor { remaining, expected } => write!(f, "InvalidCursor expected: {}, remaining: {}", expected, remaining),
+            Error::InvalidCursor {
+                remaining,
+                expected,
+            } => write!(
+                f,
+                "InvalidCursor expected: {}, remaining: {}",
+                expected, remaining
+            ),
             Error::FragmentedModeNotSupported => write!(f, "FragmentedModeNotSupported"),
             Error::NotSupported => write!(f, "NotSupported"),
             Error::Disconnect => write!(f, "Disconnect"),
@@ -741,7 +793,6 @@ impl fmt::Display for FrameError {
     }
 }
 
-
 impl fmt::Display for VarintError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -765,10 +816,16 @@ impl fmt::Display for FramePayloadError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             FramePayloadError::InsufficientBytes => write!(f, "FramePayload::InsufficientBytes"),
-            FramePayloadError::InvalidKVList(err) => write!(f, "FramePayload::InvalidKVList {}", err),
+            FramePayloadError::InvalidKVList(err) => {
+                write!(f, "FramePayload::InvalidKVList {}", err)
+            }
             FramePayloadError::NotSupported(r#type) => write!(f, "NotSupported {}", r#type),
-            FramePayloadError::InvalidListOfMessages(err) => write!(f, "FramePayload::InvalidListOfMessages {}", err),
-            FramePayloadError::InvalidListOfActions(err) => write!(f, "FramePayload::InvalidListOfActions {}", err),
+            FramePayloadError::InvalidListOfMessages(err) => {
+                write!(f, "FramePayload::InvalidListOfMessages {}", err)
+            }
+            FramePayloadError::InvalidListOfActions(err) => {
+                write!(f, "FramePayload::InvalidListOfActions {}", err)
+            }
         }
     }
 }
@@ -787,17 +844,30 @@ impl fmt::Display for FrameType {
     }
 }
 
-
 impl fmt::Display for ActionError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ActionError::InsufficientBytes => write!(f, "ActionError::InsufficientBytes"),
-            ActionError::InvalidActionType(r#type) => write!(f, "ActionError::InvalidActionType {}", r#type),
-            ActionError::InvalidActionScope(r#type) => write!(f, "ActionError::InvalidActionScope {}", r#type),
-            ActionError::InvalidNumberOfArgs(r#type, expected, actual) => write!(f, "ActionError::InvalidNumberOfArgs {}, got {} expected {}", r#type, actual, expected),
-            ActionError::InvalidSetVarActionVarName(err) => write!(f, "ActionError::InvalidSetVarActionVarName {}", err),
-            ActionError::InvalidSetVarActionVarValue(err) => write!(f, "ActionError::InvalidSetVarActionVarValue {}", err),
-            ActionError::InvalidUnsetVarActionVarName(err) => write!(f, "ActionError::InvalidUnsetVarActionVarName {}", err),
+            ActionError::InvalidActionType(r#type) => {
+                write!(f, "ActionError::InvalidActionType {}", r#type)
+            }
+            ActionError::InvalidActionScope(r#type) => {
+                write!(f, "ActionError::InvalidActionScope {}", r#type)
+            }
+            ActionError::InvalidNumberOfArgs(r#type, expected, actual) => write!(
+                f,
+                "ActionError::InvalidNumberOfArgs {}, got {} expected {}",
+                r#type, actual, expected
+            ),
+            ActionError::InvalidSetVarActionVarName(err) => {
+                write!(f, "ActionError::InvalidSetVarActionVarName {}", err)
+            }
+            ActionError::InvalidSetVarActionVarValue(err) => {
+                write!(f, "ActionError::InvalidSetVarActionVarValue {}", err)
+            }
+            ActionError::InvalidUnsetVarActionVarName(err) => {
+                write!(f, "ActionError::InvalidUnsetVarActionVarName {}", err)
+            }
         }
     }
 }
@@ -814,7 +884,9 @@ impl fmt::Display for ActionType {
 impl fmt::Display for ListOfActionsError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ListOfActionsError::InvalidAction(err) => write!(f, "ListOfActions::InvalidAction {}", err),
+            ListOfActionsError::InvalidAction(err) => {
+                write!(f, "ListOfActions::InvalidAction {}", err)
+            }
         }
     }
 }
@@ -822,10 +894,18 @@ impl fmt::Display for ListOfActionsError {
 impl fmt::Display for ListOfMessagesError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ListOfMessagesError::InsufficientBytes => write!(f, "ListOfMessages::InsufficientBytes"),
-            ListOfMessagesError::InvalidKVListName(err) => write!(f, "ListOfMessages::InvalidKVListName {}", err),
-            ListOfMessagesError::InvalidKVListValue(err) => write!(f, "ListOfMessages::InvalidKVListValue {}", err),
-            ListOfMessagesError::InvalidMessageName(err) => write!(f, "ListOfMessages::InvalidMessageName {}", err),
+            ListOfMessagesError::InsufficientBytes => {
+                write!(f, "ListOfMessages::InsufficientBytes")
+            }
+            ListOfMessagesError::InvalidKVListName(err) => {
+                write!(f, "ListOfMessages::InvalidKVListName {}", err)
+            }
+            ListOfMessagesError::InvalidKVListValue(err) => {
+                write!(f, "ListOfMessages::InvalidKVListValue {}", err)
+            }
+            ListOfMessagesError::InvalidMessageName(err) => {
+                write!(f, "ListOfMessages::InvalidMessageName {}", err)
+            }
         }
     }
 }
@@ -854,13 +934,23 @@ impl fmt::Display for TypedDataError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             TypedDataError::InsufficientBytes => write!(f, "TypedDataError::InsufficientBytes"),
-            TypedDataError::InvalidType(r#type) => write!(f, "TypedDataError::InvalidType {}", r#type),
-            TypedDataError::InvalidString(err) => write!(f, "TypedDataError::InvalidString {}", err),
+            TypedDataError::InvalidType(r#type) => {
+                write!(f, "TypedDataError::InvalidType {}", r#type)
+            }
+            TypedDataError::InvalidString(err) => {
+                write!(f, "TypedDataError::InvalidString {}", err)
+            }
             TypedDataError::InvalidIpv4(err) => write!(f, "TypedDataError::InvalidIpv4 {}", err),
             TypedDataError::InvalidIpv6(err) => write!(f, "TypedDataError::InvalidIpv6 {}", err),
             TypedDataError::NotSupported => write!(f, "TypedDataError::NotSupported"),
-            TypedDataError::NumberConversionError(data_type, r#u64) => write!(f, "TypedDataError::NumberConversionError ({}, {})", data_type, r#u64),
-            TypedDataError::NumberParsingError(data_type, err) => write!(f, "TypedDataError::InvalidIpv6 ({}, {})", data_type, err),
+            TypedDataError::NumberConversionError(data_type, r#u64) => write!(
+                f,
+                "TypedDataError::NumberConversionError ({}, {})",
+                data_type, r#u64
+            ),
+            TypedDataError::NumberParsingError(data_type, err) => {
+                write!(f, "TypedDataError::InvalidIpv6 ({}, {})", data_type, err)
+            }
         }
     }
 }
