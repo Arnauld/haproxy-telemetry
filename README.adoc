@@ -1,0 +1,68 @@
+# HAProxy Telemetry
+
+## Development setup
+
+### Overview
+
+[source, ditaa]
+....
+     | frontend :7000 with SPOA
+     | frontend :8000   no SPOA
+     |
+ +---v-------------+
+ | HAProxy         |  (devenv/conf/haproxy.conf)
+ |                 |
+ |        +------+ |
+ |        | SPOE | |  (devenv/conf/spoe.cfg)
+ |        +----.-+ |
+ |             |   |
+ |   backends  |   |
+ |   +------+--v---+
+ |   |      |      |
+ +---+--.---+---.--+
+        |       |     :7001 +-------------+
+        |       +----------->    SPOA     |
+        |          SPOP     +-----.-------+
+  :8080 |                         |
+ +------v-----+             +-----v-------+
+ | FakeServer |------------>| OTEL/jaeger |
+ +------------+             +-------------+
+....
+
+### Start local setup
+
+Start local `haproxy` + `fake-server` + `jaeger`
+
+[source,bash]
+....
+cd devenv/
+docker-compose up -d
+curl http://localhost:7000
+....
+
+[cols="1,2"]
+|===
+| Jaeger UI
+| http://localhost:16686/
+
+| HAProxy stats
+| http://localhost:7004/;norefresh
+
+| Rust SPOA
+| :7001
+|===
+
+### Start SPOA
+
+[source,bash]
+....
+cargo run
+....
+
+## Resources
+
+* SPOP specifications: http://www.haproxy.org/download/2.6/doc/SPOE.txt
+* _"Official"_ HAProxy SPOA "sample" (in c): https://github.com/haproxy/spoa-example
+* _"Official"_ HAProxy SPOA open tracing "sample" (in c): https://github.com/haproxytech/spoa-opentracing
+* HAProxy SPOA example (in rust): https://github.com/vkill/haproxy-spoa-example
+* "Extending HAProxy with the Stream Processing Offload Engine" : https://www.haproxy.com/fr/blog/extending-haproxy-with-the-stream-processing-offload-engine/

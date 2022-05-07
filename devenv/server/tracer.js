@@ -23,7 +23,10 @@ module.exports = (serviceName) => {
   if (EXPORTER.toLowerCase().startsWith('z')) {
     exporter = new ZipkinExporter();
   } else {
-    exporter = new JaegerExporter();
+    exporter = new JaegerExporter({
+          endpoint: process.env.JAEGER_ENDPOINT,
+        }
+    );
   }
 
   provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
