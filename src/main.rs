@@ -66,7 +66,12 @@ fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
                 actions,
             })
         }
-        _ => Err(Error::NotSupported)
+        Frame::HAProxyDisconnect { header: _, content: _} => {
+            Err(Error::Disconnect)
+        }
+        _ => {
+            Err(Error::NotSupported)
+        }
     }
 }
 
@@ -83,6 +88,11 @@ async fn process(socket: TcpStream) {
                 Ok(response) => {
                     println!("REP: {:?}", response);
                     connection.write_frame(&response).await.unwrap();
+                }
+                Err(Error::Disconnect) => {
+                    println!("Disconnecting");
+                    // break the loop
+                    return;
                 }
                 Err(err) => {
                     println!("ERR: {:?}", err);

@@ -254,6 +254,7 @@ pub enum Error {
 
     ///
     NotSupported,
+    Disconnect,
 
     /// Invalid message encoding
     InvalidFrame(FrameError),
@@ -715,6 +716,7 @@ impl fmt::Display for Error {
             Error::InvalidCursor { remaining, expected } => write!(f, "InvalidCursor expected: {}, remaining: {}", expected, remaining),
             Error::FragmentedModeNotSupported => write!(f, "FragmentedModeNotSupported"),
             Error::NotSupported => write!(f, "NotSupported"),
+            Error::Disconnect => write!(f, "Disconnect"),
             Error::InvalidFrame(err) => write!(f, "InvalidFrame {}", err),
             Error::None => write!(f, "<none>"),
             Error::IO(err) => err.fmt(f),
