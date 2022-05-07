@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use tokio::net::{TcpListener, TcpStream};
 
 pub use connection::Connection;
-use frame::{Error, Frame, FrameFlags, FrameHeader, FrameType, TypedData};
+use frame::{Action, Error, Frame, FrameFlags, FrameHeader, FrameType, TypedData};
+
+use crate::frame::ActionVarScope;
 
 mod connection;
 
@@ -44,6 +46,24 @@ fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
                     r#type: FrameType::AGENT_HELLO,
                 },
                 content: response_content,
+            })
+        }
+        Frame::Notify { header, messages: _ } => {
+            let mut actions: Vec<Action> = vec![];
+            actions.push(Action::SetVar {
+                scope: ActionVarScope::REQUEST,
+                name: "trace-id".to_string(),
+                value: TypedData::STRING("aef34-x35-bb9".to_string()),
+            });
+
+            Ok(Frame::Ack {
+                header: FrameHeader {
+                    frame_id: header.frame_id,
+                    stream_id: header.stream_id,
+                    flags: FrameFlags::new(true, false),
+                    r#type: FrameType::ACK,
+                },
+                actions,
             })
         }
         _ => Err(Error::NotSupported)

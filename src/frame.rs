@@ -22,11 +22,42 @@ pub enum Frame {
     Notify { header: FrameHeader, messages: HashMap<String, HashMap<String, TypedData>> },
     AgentHello { header: FrameHeader, content: HashMap<String, TypedData> },
     AgentDisconnect { header: FrameHeader },
-    Ack { header: FrameHeader },
+    Ack { header: FrameHeader, actions: Vec<Action> },
 }
 
+#[derive(IntoPrimitive, TryFromPrimitive, PartialEq, Eq, Clone, Debug)]
+#[repr(u8)]
+#[allow(non_camel_case_types)]
+pub enum ActionVarScope {
+    PROCESS = 0,
+    SESSION = 1,
+    TRANSACTION = 2,
+    REQUEST = 3,
+    RESPONSE = 4,
+}
+
+#[allow(non_camel_case_types)]
+#[derive(TryFromPrimitive, IntoPrimitive, Copy, Clone, PartialEq, Debug)]
+#[repr(u8)]
+pub enum ActionType {
+    SET_VAR = 1,
+    UNSET_VAR = 2,
+}
+
+
 #[derive(Clone, Debug)]
-pub enum Message {}
+#[allow(non_camel_case_types)]
+pub enum Action {
+    SetVar {
+        scope: ActionVarScope,
+        name: String,
+        value: TypedData,
+    },
+    UnsetVar {
+        scope: ActionVarScope,
+        name: String,
+    },
+}
 
 #[allow(non_camel_case_types)]
 #[derive(TryFromPrimitive, IntoPrimitive, Copy, Clone, PartialEq, Debug)]
@@ -164,6 +195,22 @@ pub enum TypedDataError {
 }
 
 #[derive(Debug)]
+pub enum ActionError {
+    InsufficientBytes,
+    InvalidActionType(u8),
+    InvalidActionScope(u8),
+    InvalidNumberOfArgs(ActionType, u8, u8),
+    InvalidSetVarActionVarName(StringError),
+    InvalidSetVarActionVarValue(TypedDataError),
+    InvalidUnsetVarActionVarName(StringError),
+}
+
+#[derive(Debug)]
+pub enum ListOfActionsError {
+    InvalidAction(ActionError),
+}
+
+#[derive(Debug)]
 pub enum ListOfMessagesError {
     InsufficientBytes,
     InvalidMessageName(StringError),
@@ -183,6 +230,7 @@ pub enum FramePayloadError {
     InsufficientBytes,
     InvalidKVList(KVListError),
     InvalidListOfMessages(ListOfMessagesError),
+    InvalidListOfActions(ListOfActionsError),
     NotSupported(FrameType),
 }
 
@@ -257,6 +305,11 @@ impl Frame {
                 write_kv_list(dst, content).unwrap();
                 Ok(())
             }
+            Frame::Ack { header, actions } => {
+                write_frame_header(dst, header).unwrap();
+                write_list_of_actions(dst, actions).unwrap();
+                Ok(())
+            }
             _ => Err(Error::NotSupported)
         }
     }
@@ -292,8 +345,96 @@ pub fn parse_frame_payload(src: &mut Cursor<&[u8]>, frame_header: &FrameHeader) 
                 messages: body,
             })
         }
+        FrameType::ACK => {
+            let body = parse_list_of_actions(src).map_err(|err| FramePayloadError::InvalidListOfActions(err))?;
+            Ok(Frame::Ack {
+                header: frame_header.to_owned(),
+                actions: body,
+            })
+        }
         _ => Err(FramePayloadError::NotSupported(frame_header.r#type))
     }
+}
+
+pub fn write_list_of_actions(dst: &mut BytesMut, actions: &Vec<Action>) -> Result<(), Error> {
+    for action in actions {
+        write_action(dst, &action).unwrap();
+    }
+    Ok(())
+}
+
+pub fn write_action(dst: &mut BytesMut, action: &Action) -> Result<(), Error> {
+    match action {
+        Action::SetVar { name, value, scope } => {
+            dst.put_u8(ActionType::SET_VAR.into());
+            dst.put_u8(3);
+            dst.put_u8(scope.to_owned().into());
+            write_string(dst, name).unwrap();
+            write_typed_data(dst, value).unwrap();
+        }
+        Action::UnsetVar { name, scope } => {
+            dst.put_u8(ActionType::UNSET_VAR.into());
+            dst.put_u8(2);
+            dst.put_u8(scope.to_owned().into());
+            write_string(dst, name).unwrap();
+        }
+    }
+    Ok(())
+}
+
+pub fn parse_list_of_actions(src: &mut Cursor<&[u8]>) -> Result<Vec<Action>, ListOfActionsError> {
+    let mut actions: Vec<Action> = vec![];
+
+    while src.has_remaining() {
+        let action: Action = parse_action(src).map_err(|err| ListOfActionsError::InvalidAction(err))?;
+        actions.push(action)
+    }
+    Ok(actions)
+}
+
+pub fn parse_action(src: &mut Cursor<&[u8]>) -> Result<Action, ActionError> {
+    let r#type = parse_action_type(src)?;
+    let nb_args = src.get_u8();
+    match r#type {
+        ActionType::SET_VAR => {
+            if nb_args != 3 {
+                Err(ActionError::InvalidNumberOfArgs(ActionType::SET_VAR, nb_args, 3))
+            } else {
+                let scope = parse_action_scope(src)?;
+                let name = parse_string(src).map_err(|e| ActionError::InvalidSetVarActionVarName(e))?;
+                let value = parse_typed_data(src).map_err(|e| ActionError::InvalidSetVarActionVarValue(e))?;
+                Ok(Action::SetVar {
+                    scope,
+                    name,
+                    value,
+                })
+            }
+        }
+        ActionType::UNSET_VAR => {
+            if nb_args != 2 {
+                Err(ActionError::InvalidNumberOfArgs(ActionType::SET_VAR, nb_args, 2))
+            } else {
+                let scope = parse_action_scope(src)?;
+                let name = parse_string(src).map_err(|e| ActionError::InvalidUnsetVarActionVarName(e))?;
+                Ok(Action::UnsetVar {
+                    scope,
+                    name,
+                })
+            }
+        }
+    }
+}
+
+pub fn parse_action_type(src: &mut Cursor<&[u8]>) -> Result<ActionType, ActionError> {
+    let raw = src.get_u8();
+    let r#type = ActionType::try_from(raw).map_err(|_| ActionError::InvalidActionType(raw))?;
+    Ok(r#type)
+}
+
+pub fn parse_action_scope(src: &mut Cursor<&[u8]>) -> Result<ActionVarScope, ActionError> {
+    let raw = src.get_u8();
+    let r#type = ActionVarScope::try_from(raw).map_err(|_| ActionError::InvalidActionScope(raw))?;
+    Ok(r#type)
 }
 
 pub fn parse_list_of_messages(src: &mut Cursor<&[u8]>) -> Result<HashMap::<String, HashMap::<String, TypedData>>, ListOfMessagesError> {
@@ -625,6 +766,7 @@ impl fmt::Display for FramePayloadError {
             FramePayloadError::InvalidKVList(err) => write!(f, "FramePayload::InvalidKVList {}", err),
             FramePayloadError::NotSupported(r#type) => write!(f, "NotSupported {}", r#type),
             FramePayloadError::InvalidListOfMessages(err) => write!(f, "FramePayload::InvalidListOfMessages {}", err),
+            FramePayloadError::InvalidListOfActions(err) => write!(f, "FramePayload::InvalidListOfActions {}", err),
         }
     }
 }
@@ -643,6 +785,37 @@ impl fmt::Display for FrameType {
     }
 }
 
+
+impl fmt::Display for ActionError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ActionError::InsufficientBytes => write!(f, "ActionError::InsufficientBytes"),
+            ActionError::InvalidActionType(r#type) => write!(f, "ActionError::InvalidActionType {}", r#type),
+            ActionError::InvalidActionScope(r#type) => write!(f, "ActionError::InvalidActionScope {}", r#type),
+            ActionError::InvalidNumberOfArgs(r#type, expected, actual) => write!(f, "ActionError::InvalidNumberOfArgs {}, got {} expected {}", r#type, actual, expected),
+            ActionError::InvalidSetVarActionVarName(err) => write!(f, "ActionError::InvalidSetVarActionVarName {}", err),
+            ActionError::InvalidSetVarActionVarValue(err) => write!(f, "ActionError::InvalidSetVarActionVarValue {}", err),
+            ActionError::InvalidUnsetVarActionVarName(err) => write!(f, "ActionError::InvalidUnsetVarActionVarName {}", err),
+        }
+    }
+}
+
+impl fmt::Display for ActionType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ActionType::SET_VAR => write!(f, "SET_VAR"),
+            ActionType::UNSET_VAR => write!(f, "UNSET_VAR"),
+        }
+    }
+}
+
+impl fmt::Display for ListOfActionsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ListOfActionsError::InvalidAction(err) => write!(f, "ListOfActions::InvalidAction {}", err),
+        }
+    }
+}
 
 impl fmt::Display for ListOfMessagesError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
