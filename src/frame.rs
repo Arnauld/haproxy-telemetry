@@ -9,9 +9,8 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::num::TryFromIntError;
 use std::string::FromUtf8Error;
 
-use bytes::Buf;
-use num_enum::TryFromPrimitive;
-use tokio::io::AsyncWriteExt;
+use bytes::{Buf, BufMut, BytesMut};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 const U32_LENGTH: usize = std::mem::size_of::<u32>();
 
@@ -19,7 +18,7 @@ const U32_LENGTH: usize = std::mem::size_of::<u32>();
 #[derive(Clone, Debug)]
 pub enum Frame {
     HAProxyHello { header: FrameHeader, content: HashMap<String, TypedData> },
-    HAProxyDisconnect { header: FrameHeader },
+    HAProxyDisconnect { header: FrameHeader, content: HashMap<String, TypedData> },
     Notify { header: FrameHeader },
     AgentHello { header: FrameHeader, content: HashMap<String, TypedData> },
     AgentDisconnect { header: FrameHeader },
@@ -27,7 +26,7 @@ pub enum Frame {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(TryFromPrimitive, Clone, PartialEq, Debug)]
+#[derive(TryFromPrimitive, IntoPrimitive, Copy, Clone, PartialEq, Debug)]
 #[repr(u8)]
 pub enum FrameType {
     UNSET = 0,
@@ -38,6 +37,14 @@ pub enum FrameType {
     AGENT_DISCONNECT = 102,
     ACK = 103,
 }
+
+impl FrameType {
+    pub fn write_to(self, dst: &mut BytesMut) -> Result<(), Error> {
+        dst.put_u8(self.into());
+        Ok(())
+    }
+}
+
 
 #[derive(Clone, Debug)]
 pub struct FrameHeader {
@@ -95,7 +102,7 @@ pub enum TypedData {
     BINARY(Vec<u8>),
 }
 
-#[derive(TryFromPrimitive, PartialEq, Debug)]
+#[derive(TryFromPrimitive, IntoPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 pub enum TypedDataType {
     NULL = 0,
@@ -164,7 +171,7 @@ pub enum KVListError {
 pub enum FramePayloadError {
     InsufficientBytes,
     InvalidKVList(KVListError),
-    NotSupported,
+    NotSupported(FrameType),
 }
 
 #[derive(Debug)]
@@ -231,16 +238,11 @@ impl Frame {
         parse_frame_payload(src, &frame_header).map_err(|e| Error::InvalidFrame(FrameError::InvalidFramePayload(e)))
     }
 
-    pub fn write_to(&self, dst: &mut Cursor<&mut [u8]>) -> Result<(), Error> {
+    pub fn write_to(&self, dst: &mut BytesMut) -> Result<(), Error> {
         match &self {
             Frame::AgentHello { header, content } => {
-                let start = dst.position();
-                dst.advance(U32_LENGTH);
-                write_frame_header(dst, header);
-                write_kv_list(dst, content);
-                let end = dst.position();
-                dst.set_position(start);
-                dst.write_u32((end - start) as u32);
+                write_frame_header(dst, header).unwrap();
+                write_kv_list(dst, content).unwrap();
                 Ok(())
             }
             _ => Err(Error::NotSupported)
@@ -257,7 +259,21 @@ pub fn parse_frame_payload(src: &mut Cursor<&[u8]>, frame_header: &FrameHeader) 
                 content: body,
             })
         }
-        _ => Err(FramePayloadError::NotSupported)
+        FrameType::AGENT_HELLO => {
+            let body = parse_kv_list(src).map_err(|err| FramePayloadError::InvalidKVList(err))?;
+            Ok(Frame::AgentHello {
+                header: frame_header.to_owned(),
+                content: body,
+            })
+        }
+        FrameType::HAPROXY_DISCONNECT => {
+            let body = parse_kv_list(src).map_err(|err| FramePayloadError::InvalidKVList(err))?;
+            Ok(Frame::HAProxyDisconnect {
+                header: frame_header.to_owned(),
+                content: body,
+            })
+        }
+        _ => Err(FramePayloadError::NotSupported(frame_header.r#type))
     }
 }
 
@@ -269,6 +285,14 @@ pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<HashMap::<String, TypedD
         body.insert(name, value);
     }
     Ok(body)
+}
+
+pub fn write_kv_list(dst: &mut BytesMut, hash: &HashMap::<String, TypedData>) -> Result<(), Error> {
+    for (k, v) in hash {
+        write_string(dst, k).unwrap();
+        write_typed_data(dst, v).unwrap();
+    }
+    Ok(())
 }
 
 pub fn parse_typed_data(src: &mut Cursor<&[u8]>) -> Result<TypedData, TypedDataError> {
@@ -332,11 +356,62 @@ pub fn parse_typed_data(src: &mut Cursor<&[u8]>) -> Result<TypedData, TypedDataE
             TypedData::STRING(value)
         }
         TypedDataType::BINARY => {
-            return Err(TypedDataError::NotSupported)
+            return Err(TypedDataError::NotSupported);
         }
     };
 
     Ok(value)
+}
+
+pub fn write_typed_data(dst: &mut BytesMut, value: &TypedData) -> Result<(), Error> {
+    match value {
+        TypedData::NULL => {
+            dst.put_u8(0);
+            Ok(())
+        }
+        TypedData::BOOL(v) => {
+            dst.put_u8(if true == *v {
+                0b_0001_0001_u8
+            } else {
+                0b_0000_0001_u8
+            });
+            Ok(())
+        }
+        TypedData::INT32(v) => {
+            dst.put_u8(0b_0000_0010_u8);
+            write_varint(dst, *v as u64)
+        }
+        TypedData::UINT32(v) => {
+            dst.put_u8(0b_0000_0011_u8);
+            write_varint(dst, *v as u64)
+        }
+        TypedData::INT64(v) => {
+            dst.put_u8(0b_0000_0100_u8);
+            write_varint(dst, *v as u64)
+        }
+        TypedData::UINT64(v) => {
+            dst.put_u8(0b_0000_0101_u8);
+            write_varint(dst, *v as u64)
+        }
+        TypedData::IPV4(addr) => {
+            dst.put_u8(0b_0000_0110_u8);
+            dst.put_slice(addr.octets().as_ref());
+            Ok(())
+        }
+        TypedData::IPV6(addr) => {
+            dst.put_u8(0b_0000_0111_u8);
+            dst.put_slice(addr.octets().as_ref());
+            Ok(())
+        }
+        TypedData::STRING(v) => {
+            dst.put_u8(0b_0000_1000_u8);
+            write_string(dst, v)
+        }
+        TypedData::BINARY(_) => {
+            dst.put_u8(0b_0000_1001_u8);
+            Err(Error::NotSupported)
+        }
+    }
 }
 
 pub fn parse_string(src: &mut Cursor<&[u8]>) -> Result<String, StringError> {
@@ -354,6 +429,14 @@ pub fn parse_string(src: &mut Cursor<&[u8]>) -> Result<String, StringError> {
     Ok(val)
 }
 
+pub fn write_string(dst: &mut BytesMut, value: &String) -> Result<(), Error> {
+    let bytes = value.as_bytes();
+    let len = value.len();
+    write_varint(dst, len as u64).unwrap();
+    dst.put_slice(bytes);
+    Ok(())
+}
+
 pub fn parse_frame_header(src: &mut Cursor<&[u8]>) -> Result<FrameHeader, FrameHeaderError> {
     let raw = src.get_u8();
     let r#type = FrameType::try_from(raw).map_err(|_| FrameHeaderError::InvalidFrameType(raw))?;
@@ -369,6 +452,17 @@ pub fn parse_frame_header(src: &mut Cursor<&[u8]>) -> Result<FrameHeader, FrameH
         frame_id,
     })
 }
+
+pub fn write_frame_header(dst: &mut BytesMut, frame_header: &FrameHeader) -> Result<(), Error> {
+    &frame_header.r#type.write_to(dst).unwrap();
+    let frame_flags = &frame_header.flags;
+    let frame_flags_raw: u32 = frame_flags.0;
+    dst.put_u32(frame_flags_raw);
+    write_varint(dst, frame_header.stream_id).unwrap();
+    write_varint(dst, frame_header.frame_id).unwrap();
+    Ok(())
+}
+
 
 pub fn parse_varint(src: &mut Cursor<&[u8]>) -> Result<u64, VarintError> {
     if src.remaining() < 1 {
@@ -391,6 +485,25 @@ pub fn parse_varint(src: &mut Cursor<&[u8]>) -> Result<u64, VarintError> {
         }
     }
     Ok(res)
+}
+
+pub fn write_varint(dst: &mut BytesMut, value: u64) -> Result<(), Error> {
+    if value < 240 {
+        dst.put_u8(value as u8);
+    } else {
+        let mut value = value;
+
+        dst.put_u8((value % 256 | 240) as u8);
+
+        value = (value - 240) >> 4;
+        while value >= 128 {
+            dst.put_u8((value % 256 | 128) as u8);
+            value = (value - 128) >> 7;
+        }
+
+        dst.put_u8(value as u8);
+    }
+    Ok(())
 }
 
 impl From<String> for Error {
@@ -473,7 +586,21 @@ impl fmt::Display for FramePayloadError {
         match self {
             FramePayloadError::InsufficientBytes => write!(f, "FrameHeaderError::InsufficientBytes"),
             FramePayloadError::InvalidKVList(err) => write!(f, "InvalidKVList {}", err),
-            FramePayloadError::NotSupported => write!(f, "FramePayloadError::NotSupported"),
+            FramePayloadError::NotSupported(r#type) => write!(f, "NotSupported {}", r#type),
+        }
+    }
+}
+
+impl fmt::Display for FrameType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            FrameType::UNSET => write!(f, "UNSET"),
+            FrameType::HAPROXY_HELLO => write!(f, "HAPROXY_HELLO"),
+            FrameType::HAPROXY_DISCONNECT => write!(f, "HAPROXY_DISCONNECT"),
+            FrameType::NOTIFY => write!(f, "NOTIFY"),
+            FrameType::AGENT_HELLO => write!(f, "AGENT_HELLO"),
+            FrameType::AGENT_DISCONNECT => write!(f, "AGENT_DISCONNECT"),
+            FrameType::ACK => write!(f, "ACK"),
         }
     }
 }

@@ -1,12 +1,13 @@
 use std::collections::HashMap;
+
 use tokio::net::{TcpListener, TcpStream};
+
+pub use connection::Connection;
+use frame::{Error, Frame, FrameFlags, FrameHeader, FrameType, TypedData};
 
 mod connection;
 
-pub use connection::Connection;
-
 mod frame;
-use frame::{Frame, Error, FrameFlags, FrameHeader, FrameType, TypedData};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,7 +43,7 @@ fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
                     flags: FrameFlags::new(true, false),
                     r#type: FrameType::AGENT_HELLO,
                 },
-                content: response_content
+                content: response_content,
             })
         }
         _ => Err(Error::NotSupported)
@@ -54,16 +55,18 @@ async fn process(socket: TcpStream) {
     // byte streams. The `Connection` type is defined by mini-redis.
     let mut connection = Connection::new(socket);
 
-    if let Some(frame) = connection.read_frame().await.unwrap() {
-        println!("GOT: {:?}", frame);
+    loop {
+        if let Some(frame) = connection.read_frame().await.unwrap() {
+            println!("GOT: {:?}", frame);
 
-        match handle_frame(&frame) {
-            Ok(response) => {
-                println!("REP: {:?}", response);
-                connection.write_frame(&response).await.unwrap();
-            }
-            Err(err) => {
-                println!("ERR: {:?}", err);
+            match handle_frame(&frame) {
+                Ok(response) => {
+                    println!("REP: {:?}", response);
+                    connection.write_frame(&response).await.unwrap();
+                }
+                Err(err) => {
+                    println!("ERR: {:?}", err);
+                }
             }
         }
     }
