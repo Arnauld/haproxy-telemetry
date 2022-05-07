@@ -19,11 +19,14 @@ const U32_LENGTH: usize = std::mem::size_of::<u32>();
 pub enum Frame {
     HAProxyHello { header: FrameHeader, content: HashMap<String, TypedData> },
     HAProxyDisconnect { header: FrameHeader, content: HashMap<String, TypedData> },
-    Notify { header: FrameHeader },
+    Notify { header: FrameHeader, messages: HashMap<String, HashMap<String, TypedData>> },
     AgentHello { header: FrameHeader, content: HashMap<String, TypedData> },
     AgentDisconnect { header: FrameHeader },
     Ack { header: FrameHeader },
 }
+
+#[derive(Clone, Debug)]
+pub enum Message {}
 
 #[allow(non_camel_case_types)]
 #[derive(TryFromPrimitive, IntoPrimitive, Copy, Clone, PartialEq, Debug)]
@@ -161,6 +164,14 @@ pub enum TypedDataError {
 }
 
 #[derive(Debug)]
+pub enum ListOfMessagesError {
+    InsufficientBytes,
+    InvalidMessageName(StringError),
+    InvalidKVListName(StringError),
+    InvalidKVListValue(TypedDataError),
+}
+
+#[derive(Debug)]
 pub enum KVListError {
     InsufficientBytes,
     InvalidKVListName(StringError),
@@ -171,6 +182,7 @@ pub enum KVListError {
 pub enum FramePayloadError {
     InsufficientBytes,
     InvalidKVList(KVListError),
+    InvalidListOfMessages(ListOfMessagesError),
     NotSupported(FrameType),
 }
 
@@ -273,8 +285,33 @@ pub fn parse_frame_payload(src: &mut Cursor<&[u8]>, frame_header: &FrameHeader) 
                 content: body,
             })
         }
+        FrameType::NOTIFY => {
+            let body = parse_list_of_messages(src).map_err(|err| FramePayloadError::InvalidListOfMessages(err))?;
+            Ok(Frame::Notify {
+                header: frame_header.to_owned(),
+                messages: body,
+            })
+        }
         _ => Err(FramePayloadError::NotSupported(frame_header.r#type))
     }
+}
+
+pub fn parse_list_of_messages(src: &mut Cursor<&[u8]>) -> Result<HashMap::<String, HashMap::<String, TypedData>>, ListOfMessagesError> {
+    let mut messages = HashMap::<String, HashMap::<String, TypedData>>::new();
+    while src.has_remaining() {
+        let message_name = parse_string(src).map_err(|e| ListOfMessagesError::InvalidMessageName(e))?;
+        let nb_args = src.get_u8();
+
+        let mut message_content = HashMap::<String, TypedData>::new();
+        for _ in 0..nb_args {
+            let name = parse_string(src).map_err(|e| ListOfMessagesError::InvalidKVListName(e))?;
+            let value = parse_typed_data(src).map_err(|e| ListOfMessagesError::InvalidKVListValue(e))?;
+            message_content.insert(name, value);
+        }
+
+        messages.insert(message_name, message_content);
+    }
+    Ok(messages)
 }
 
 pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<HashMap::<String, TypedData>, KVListError> {
@@ -584,9 +621,10 @@ impl fmt::Display for FrameHeaderError {
 impl fmt::Display for FramePayloadError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            FramePayloadError::InsufficientBytes => write!(f, "FrameHeaderError::InsufficientBytes"),
-            FramePayloadError::InvalidKVList(err) => write!(f, "InvalidKVList {}", err),
+            FramePayloadError::InsufficientBytes => write!(f, "FramePayload::InsufficientBytes"),
+            FramePayloadError::InvalidKVList(err) => write!(f, "FramePayload::InvalidKVList {}", err),
             FramePayloadError::NotSupported(r#type) => write!(f, "NotSupported {}", r#type),
+            FramePayloadError::InvalidListOfMessages(err) => write!(f, "FramePayload::InvalidListOfMessages {}", err),
         }
     }
 }
@@ -601,6 +639,18 @@ impl fmt::Display for FrameType {
             FrameType::AGENT_HELLO => write!(f, "AGENT_HELLO"),
             FrameType::AGENT_DISCONNECT => write!(f, "AGENT_DISCONNECT"),
             FrameType::ACK => write!(f, "ACK"),
+        }
+    }
+}
+
+
+impl fmt::Display for ListOfMessagesError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ListOfMessagesError::InsufficientBytes => write!(f, "ListOfMessages::InsufficientBytes"),
+            ListOfMessagesError::InvalidKVListName(err) => write!(f, "ListOfMessages::InvalidKVListName {}", err),
+            ListOfMessagesError::InvalidKVListValue(err) => write!(f, "ListOfMessages::InvalidKVListValue {}", err),
+            ListOfMessagesError::InvalidMessageName(err) => write!(f, "ListOfMessages::InvalidMessageName {}", err),
         }
     }
 }
