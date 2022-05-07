@@ -6,8 +6,8 @@
 
 [source, ditaa]
 ....
-     |
-     | frontend :7000
+     | frontend :7000 with SPOA
+     | frontend :8000   no SPOA
      |
  +---v-------------+
  | HAProxy         |  (devenv/conf/haproxy.conf)

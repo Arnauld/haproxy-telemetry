@@ -49,4 +49,5 @@ services:
       - ./conf/spoe.cfg:/usr/local/etc/haproxy/spoe.cfg
     ports:
       - "7000:7000"
+      - "8000:8000"
       - "7004:7004"
