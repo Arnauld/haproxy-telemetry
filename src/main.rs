@@ -3,16 +3,15 @@ use std::collections::HashMap;
 use tokio::net::{TcpListener, TcpStream};
 
 pub use connection::Connection;
-use frame::{Action, Error, Frame, FrameFlags, FrameHeader, FrameType, TypedData};
-
-use crate::frame::ActionVarScope;
+use frame::{Action, Error, Frame, FrameHeader, FrameType, ListOfMessages, TypedData};
 
 mod connection;
 
 mod frame;
 
 mod otel;
-use crate::otel::handle_notify as otel_spoa_notify;
+use crate::otel::{handle_notify as otel_spoa_notify, new_otel_context, OtelContext, init_tracer};
+
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,22 +19,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting Agent on {}", addr);
     let listener = TcpListener::bind(addr).await?;
 
+    let _ = init_tracer ();
+    let otel_ctx = new_otel_context();
     loop {
         let (socket, addr) = listener.accept().await?;
         println!("New socket opened from {:?}", addr);
+
+        let otel_ctx: OtelContext = otel_ctx.clone();
         tokio::spawn(async move {
             // Process each socket concurrently.
-            process(socket, handle_notify).await
+            process(socket, otel_ctx, handle_notify).await
         });
     }
 }
 
-fn handle_notify(
+type NotifyHandler = fn(
+    otel_ctx: &OtelContext,
     header: &FrameHeader,
-    messages: &HashMap<String, HashMap<String, TypedData>>,
+    messages: &ListOfMessages,
+) -> Result<Option<Frame>, Error>;
+
+pub fn handle_notify(
+    otel_ctx: &OtelContext,
+    header: &FrameHeader,
+    messages: &ListOfMessages,
 ) -> Result<Option<Frame>, Error> {
-    // only impl for now
-    otel_spoa_notify(header, messages).map(|actions_opt| {
+    otel_spoa_notify(otel_ctx, header, messages).map(|actions_opt| {
         actions_opt.map(|actions| Frame::Ack {
             header: header.reply_header(&FrameType::ACK),
             actions,
@@ -43,12 +52,7 @@ fn handle_notify(
     })
 }
 
-type NotifyHandler = fn(
-    header: &FrameHeader,
-    messages: &HashMap<String, HashMap<String, TypedData>>,
-) -> Result<Option<Frame>, Error>;
-
-fn handle_frame(frame: &Frame, notify_handler: NotifyHandler) -> Result<Frame, Error> {
+fn handle_frame(frame: &Frame, otel_ctx: &OtelContext, notify_handler: NotifyHandler) -> Result<Frame, Error> {
     match frame {
         Frame::HAProxyHello { header, content: _ } => {
             // TODO: consider provided supported versions...
@@ -68,7 +72,7 @@ fn handle_frame(frame: &Frame, notify_handler: NotifyHandler) -> Result<Frame, E
             })
         }
         Frame::Notify { header, messages } => {
-            notify_handler(header, messages).map(|rep| {
+            notify_handler(otel_ctx, header, messages).map(|rep| {
                 match rep {
                     Some(response_frame) => response_frame,
                     None => {
@@ -90,7 +94,7 @@ fn handle_frame(frame: &Frame, notify_handler: NotifyHandler) -> Result<Frame, E
     }
 }
 
-async fn process(socket: TcpStream, notify_handler: NotifyHandler) {
+async fn process(socket: TcpStream, otel_ctx: OtelContext, notify_handler: NotifyHandler) {
     // The `Connection` lets us read/write redis **frames** instead of
     // byte streams. The `Connection` type is defined by mini-redis.
     let mut connection = Connection::new(socket);
@@ -99,7 +103,7 @@ async fn process(socket: TcpStream, notify_handler: NotifyHandler) {
         if let Some(frame) = connection.read_frame().await.unwrap() {
             println!("GOT: {:?}", frame);
 
-            match handle_frame(&frame, notify_handler) {
+            match handle_frame(&frame, &otel_ctx, notify_handler) {
                 Ok(response) => {
                     println!("REP: {:?}", response);
                     connection.write_frame(&response).await.unwrap();

@@ -14,24 +14,27 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 const U32_LENGTH: usize = std::mem::size_of::<u32>();
 
+pub type KVList = HashMap<String, TypedData>;
+pub type ListOfMessages = HashMap<String, HashMap<String, TypedData>>;
+
 /// A frame in the SPOP protocol.
 #[derive(Clone, Debug)]
 pub enum Frame {
     HAProxyHello {
         header: FrameHeader,
-        content: HashMap<String, TypedData>,
+        content: KVList,
     },
     HAProxyDisconnect {
         header: FrameHeader,
-        content: HashMap<String, TypedData>,
+        content: KVList,
     },
     Notify {
         header: FrameHeader,
-        messages: HashMap<String, HashMap<String, TypedData>>,
+        messages: ListOfMessages,
     },
     AgentHello {
         header: FrameHeader,
-        content: HashMap<String, TypedData>,
+        content: KVList,
     },
     AgentDisconnect {
         header: FrameHeader,
