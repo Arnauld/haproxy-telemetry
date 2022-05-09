@@ -48,7 +48,7 @@ pub fn handle_notify(
 
     if let Some(details) = messages.get("opentracing:frontend_tcp_request") {
         let tracer = global::tracer("my_service");
-        let mut span = tracer.start("my_span");
+        let mut span = tracer.start("frontend_tcp_request");
         for (k, v) in details {
             let mut key = Key::new(k.to_owned());
             let attr = v.as_value(key);
@@ -78,7 +78,6 @@ pub fn handle_notify(
         }
 
         let mut db = db.lock().unwrap();
-        println!("SPAN {:?}", &span);
         db.insert(header.stream_id.to_string(), OtelSpanContext { span });
     } else if let Some(_details) = messages.get("opentracing:tcp_response") {
         let mut db = db.lock().unwrap();
