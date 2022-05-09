@@ -12,10 +12,8 @@ pub fn handle_notify(
     }
 
     match messages.get("opentracing:frontend_tcp_request") {
-        Some(details) => {
-
-        }
-        None => ()
+        Some(details) => {}
+        None => (),
     }
 
     let mut actions: Vec<Action> = vec![];

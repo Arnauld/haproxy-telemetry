@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("New socket opened from {:?}", addr);
         tokio::spawn(async move {
             // Process each socket concurrently.
-            process(socket).await
+            process(socket, handle_notify).await
         });
     }
 }
@@ -43,7 +43,12 @@ fn handle_notify(
     })
 }
 
-fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
+type NotifyHandler = fn(
+    header: &FrameHeader,
+    messages: &HashMap<String, HashMap<String, TypedData>>,
+) -> Result<Option<Frame>, Error>;
+
+fn handle_frame(frame: &Frame, notify_handler: NotifyHandler) -> Result<Frame, Error> {
     match frame {
         Frame::HAProxyHello { header, content: _ } => {
             // TODO: consider provided supported versions...
@@ -63,7 +68,7 @@ fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
             })
         }
         Frame::Notify { header, messages } => {
-            handle_notify(header, messages).map(|rep| {
+            notify_handler(header, messages).map(|rep| {
                 match rep {
                     Some(response_frame) => response_frame,
                     None => {
@@ -85,7 +90,7 @@ fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
     }
 }
 
-async fn process(socket: TcpStream) {
+async fn process(socket: TcpStream, notify_handler: NotifyHandler) {
     // The `Connection` lets us read/write redis **frames** instead of
     // byte streams. The `Connection` type is defined by mini-redis.
     let mut connection = Connection::new(socket);
@@ -94,7 +99,7 @@ async fn process(socket: TcpStream) {
         if let Some(frame) = connection.read_frame().await.unwrap() {
             println!("GOT: {:?}", frame);
 
-            match handle_frame(&frame) {
+            match handle_frame(&frame, notify_handler) {
                 Ok(response) => {
                     println!("REP: {:?}", response);
                     connection.write_frame(&response).await.unwrap();
