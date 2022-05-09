@@ -10,8 +10,7 @@ mod connection;
 mod frame;
 
 mod otel;
-use crate::otel::{handle_notify as otel_spoa_notify, new_otel_context, OtelContext, init_tracer};
-
+use crate::otel::{handle_notify as otel_spoa_notify, init_tracer, new_otel_context, OtelContext};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting Agent on {}", addr);
     let listener = TcpListener::bind(addr).await?;
 
-    let _ = init_tracer ();
+    let _ = init_tracer();
     let otel_ctx = new_otel_context();
     loop {
         let (socket, addr) = listener.accept().await?;
@@ -52,7 +51,11 @@ pub fn handle_notify(
     })
 }
 
-fn handle_frame(frame: &Frame, otel_ctx: &OtelContext, notify_handler: NotifyHandler) -> Result<Frame, Error> {
+fn handle_frame(
+    frame: &Frame,
+    otel_ctx: &OtelContext,
+    notify_handler: NotifyHandler,
+) -> Result<Frame, Error> {
     match frame {
         Frame::HAProxyHello { header, content: _ } => {
             // TODO: consider provided supported versions...
