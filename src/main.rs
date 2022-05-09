@@ -11,6 +11,9 @@ mod connection;
 
 mod frame;
 
+mod otel;
+use crate::otel::handle_notify as otel_spoa_notify;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "0.0.0.0:7001";
@@ -25,6 +28,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             process(socket).await
         });
     }
+}
+
+fn handle_notify(
+    header: &FrameHeader,
+    messages: &HashMap<String, HashMap<String, TypedData>>,
+) -> Result<Option<Frame>, Error> {
+    // only impl for now
+    otel_spoa_notify(header, messages).map(|actions_opt| {
+        actions_opt.map(|actions| Frame::Ack {
+            header: header.reply_header(&FrameType::ACK),
+            actions,
+        })
+    })
 }
 
 fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
@@ -42,34 +58,23 @@ fn handle_frame(frame: &Frame) -> Result<Frame, Error> {
             );
 
             Ok(Frame::AgentHello {
-                header: FrameHeader {
-                    frame_id: header.frame_id,
-                    stream_id: header.stream_id,
-                    flags: FrameFlags::new(true, false),
-                    r#type: FrameType::AGENT_HELLO,
-                },
+                header: header.reply_header(&FrameType::AGENT_HELLO),
                 content: response_content,
             })
         }
-        Frame::Notify {
-            header,
-            messages: _,
-        } => {
-            let mut actions: Vec<Action> = vec![];
-            actions.push(Action::SetVar {
-                scope: ActionVarScope::REQUEST,
-                name: "trace-id".to_string(),
-                value: TypedData::STRING("aef34-x35-bb9".to_string()),
-            });
-
-            Ok(Frame::Ack {
-                header: FrameHeader {
-                    frame_id: header.frame_id,
-                    stream_id: header.stream_id,
-                    flags: FrameFlags::new(true, false),
-                    r#type: FrameType::ACK,
-                },
-                actions,
+        Frame::Notify { header, messages } => {
+            handle_notify(header, messages).map(|rep| {
+                match rep {
+                    Some(response_frame) => response_frame,
+                    None => {
+                        // basic ACK without action
+                        let no_actions: Vec<Action> = vec![];
+                        Frame::Ack {
+                            header: header.reply_header(&FrameType::ACK),
+                            actions: no_actions,
+                        }
+                    }
+                }
             })
         }
         Frame::HAProxyDisconnect {

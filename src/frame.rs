@@ -103,6 +103,17 @@ pub struct FrameHeader {
     pub frame_id: u64,
 }
 
+impl FrameHeader {
+    pub fn reply_header(&self, frame_type: &FrameType) -> FrameHeader {
+        FrameHeader {
+            frame_id: self.frame_id,
+            stream_id: self.stream_id,
+            flags: FrameFlags::new(true, false),
+            r#type: frame_type.to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FrameFlags(u32);
 
@@ -334,6 +345,20 @@ impl Frame {
                 Ok(())
             }
             _ => Err(Error::NotSupported),
+        }
+    }
+
+    pub fn frame_header(&self) -> &FrameHeader {
+        match self {
+            Frame::HAProxyHello { header, content: _ } => header,
+            Frame::HAProxyDisconnect { header, content: _ } => header,
+            Frame::Notify {
+                header,
+                messages: _,
+            } => header,
+            Frame::AgentHello { header, content: _ } => header,
+            Frame::AgentDisconnect { header } => header,
+            Frame::Ack { header, actions: _ } => header,
         }
     }
 }
@@ -679,7 +704,7 @@ pub fn parse_frame_header(src: &mut Cursor<&[u8]>) -> Result<FrameHeader, FrameH
 }
 
 pub fn write_frame_header(dst: &mut BytesMut, frame_header: &FrameHeader) -> Result<(), Error> {
-    &frame_header.r#type.write_to(dst).unwrap();
+    let _ = &frame_header.r#type.write_to(dst).unwrap();
     let frame_flags = &frame_header.flags;
     let frame_flags_raw: u32 = frame_flags.0;
     dst.put_u32(frame_flags_raw);
