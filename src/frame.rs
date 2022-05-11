@@ -805,6 +805,23 @@ impl fmt::Display for Error {
     }
 }
 
+impl fmt::Display for TypedData {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TypedData::NULL => write!(f, "<null>"),
+            TypedData::BOOL(v) => write!(f, "{}", v),
+            TypedData::INT32(v) => write!(f, "{}", v),
+            TypedData::UINT32(v) => write!(f, "{}", v),
+            TypedData::INT64(v) => write!(f, "{}", v),
+            TypedData::UINT64(v) => write!(f, "{}", v),
+            TypedData::IPV4(v) => write!(f, "{}", v),
+            TypedData::IPV6(v) => write!(f, "{}", v),
+            TypedData::STRING(v) => write!(f, "{}", v),
+            TypedData::BINARY(_) => write!(f, "<binary>"),
+        }
+    }
+}
+
 impl From<std::io::Error> for Error {
     fn from(err: io::Error) -> Self {
         Error::IO(err)

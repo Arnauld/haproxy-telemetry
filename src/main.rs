@@ -66,7 +66,7 @@ fn handle_frame(
             response_content.insert("max-frame-size".to_string(), TypedData::UINT32(16380_u32));
             response_content.insert(
                 "capabilities".to_string(),
-                TypedData::STRING("pipelining,async".to_string()),
+                TypedData::STRING("pipelining".to_string()),
             );
 
             Ok(Frame::AgentHello {
