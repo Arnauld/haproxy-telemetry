@@ -14,8 +14,8 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 const U32_LENGTH: usize = std::mem::size_of::<u32>();
 
-pub type KVList = HashMap<String, TypedData>;
-pub type ListOfMessages = HashMap<String, HashMap<String, TypedData>>;
+pub type KVList = Vec<(String, TypedData)>;
+pub type ListOfMessages = HashMap<String, KVList>;
 
 /// A frame in the SPOP protocol.
 #[derive(Clone, Debug)]
@@ -500,19 +500,19 @@ pub fn parse_action_scope(src: &mut Cursor<&[u8]>) -> Result<ActionVarScope, Act
 
 pub fn parse_list_of_messages(
     src: &mut Cursor<&[u8]>,
-) -> Result<HashMap<String, HashMap<String, TypedData>>, ListOfMessagesError> {
-    let mut messages = HashMap::<String, HashMap<String, TypedData>>::new();
+) -> Result<HashMap<String, KVList>, ListOfMessagesError> {
+    let mut messages = HashMap::<String, KVList>::new();
     while src.has_remaining() {
         let message_name =
             parse_string(src).map_err(|e| ListOfMessagesError::InvalidMessageName(e))?;
         let nb_args = src.get_u8();
 
-        let mut message_content = HashMap::<String, TypedData>::new();
+        let mut message_content = KVList::new();
         for _ in 0..nb_args {
             let name = parse_string(src).map_err(|e| ListOfMessagesError::InvalidKVListName(e))?;
             let value =
                 parse_typed_data(src).map_err(|e| ListOfMessagesError::InvalidKVListValue(e))?;
-            message_content.insert(name, value);
+            message_content.push((name, value));
         }
 
         messages.insert(message_name, message_content);
@@ -520,18 +520,18 @@ pub fn parse_list_of_messages(
     Ok(messages)
 }
 
-pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<HashMap<String, TypedData>, KVListError> {
-    let mut body = HashMap::<String, TypedData>::new();
+pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<KVList, KVListError> {
+    let mut body = KVList::new();
     while src.has_remaining() {
         let name = parse_string(src).map_err(|e| KVListError::InvalidKVListName(e))?;
         let value = parse_typed_data(src).map_err(|e| KVListError::InvalidKVListValue(e))?;
-        body.insert(name, value);
+        body.push((name, value));
     }
     Ok(body)
 }
 
-pub fn write_kv_list(dst: &mut BytesMut, hash: &HashMap<String, TypedData>) -> Result<(), Error> {
-    for (k, v) in hash {
+pub fn write_kv_list(dst: &mut BytesMut, list: &KVList) -> Result<(), Error> {
+    for (k, v) in list {
         write_string(dst, k).unwrap();
         write_typed_data(dst, v).unwrap();
     }

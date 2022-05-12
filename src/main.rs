@@ -4,6 +4,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 pub use connection::Connection;
 use frame::{Action, Error, Frame, FrameHeader, FrameType, ListOfMessages, TypedData};
+use crate::frame::KVList;
 
 mod connection;
 
@@ -61,13 +62,13 @@ fn handle_frame(
             // TODO: consider provided supported versions...
             // let supported_versions = content.get("supported-versions").unwrap();
 
-            let mut response_content = HashMap::<String, TypedData>::new();
-            response_content.insert("version".to_string(), TypedData::STRING("2.0".to_string()));
-            response_content.insert("max-frame-size".to_string(), TypedData::UINT32(16380_u32));
-            response_content.insert(
+            let mut response_content = KVList::new();
+            response_content.push(("version".to_string(), TypedData::STRING("2.0".to_string())));
+            response_content.push(("max-frame-size".to_string(), TypedData::UINT32(16380_u32)));
+            response_content.push((
                 "capabilities".to_string(),
                 TypedData::STRING("pipelining".to_string()),
-            );
+            ));
 
             Ok(Frame::AgentHello {
                 header: header.reply_header(&FrameType::AGENT_HELLO),
