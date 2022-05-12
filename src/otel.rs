@@ -1,8 +1,8 @@
-use crate::frame::{Action, ActionVarScope, Error, Frame, FrameHeader, TypedData, ListOfMessages};
-use opentelemetry::global::{BoxedSpan, ObjectSafeTracer};
+use crate::frame::{Action, ActionVarScope, Error, Frame, FrameHeader, TypedData};
+use opentelemetry::global::BoxedSpan;
 use opentelemetry::sdk::Resource;
-use opentelemetry::trace::{Span, TraceError, TraceFlags};
-use opentelemetry::{global, sdk, sdk::trace as sdktrace, trace::Tracer, Key, KeyValue};
+use opentelemetry::trace::{mark_span_as_active, Span, SpanContext, SpanKind, TraceError, TraceFlags};
+use opentelemetry::{global, sdk, sdk::trace as sdktrace, trace::Tracer, Key, KeyValue, Context};
 use std::borrow::{Borrow, BorrowMut};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -16,7 +16,6 @@ pub type OtelContext = Arc<Mutex<HashMap<String, OtelSpanContext>>>;
 pub fn init_tracer() -> Result<sdk::trace::Tracer, TraceError> {
     global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
     opentelemetry_jaeger::new_pipeline()
-        .with_agent_endpoint("http://localhost:14268/api/traces")
         .with_trace_config(
             sdktrace::config().with_resource(Resource::new(vec![KeyValue::new(
                 opentelemetry_semantic_conventions::resource::SERVICE_NAME,
@@ -37,7 +36,7 @@ const TRACESTATE_HEADER: &str = "tracestate";
 pub fn handle_notify(
     db: &OtelContext,
     header: &FrameHeader,
-    messages: &ListOfMessages,
+    messages: &HashMap<String, HashMap<String, TypedData>>,
 ) -> Result<Option<Vec<Action>>, Error> {
     for (k, _v) in messages {
         println!("======================");
@@ -49,7 +48,10 @@ pub fn handle_notify(
 
     if let Some(details) = messages.get("opentracing:frontend_tcp_request") {
         let tracer = global::tracer("my_service");
-        let mut span = tracer.start("my_span");
+        let mut span = tracer
+            .span_builder("frontend_tcp_request")
+            .with_kind(SpanKind::Server)
+            .start(&tracer);
         for (k, v) in details {
             let mut key = Key::new(k.to_owned());
             let attr = v.as_value(key);
@@ -60,7 +62,7 @@ pub fn handle_notify(
         if span_context.is_valid() {
             let header_value = format!(
                 "{:02x}-{:032x}-{:016x}-{:02x}",
-                1, //SUPPORTED_VERSION,
+                0, //SUPPORTED_VERSION,
                 span_context.trace_id(),
                 span_context.span_id(),
                 span_context.trace_flags() & TraceFlags::SAMPLED
@@ -79,19 +81,36 @@ pub fn handle_notify(
         }
 
         let mut db = db.lock().unwrap();
-        db.insert(header.stream_id.to_string(), OtelSpanContext { span });
-    } else if let Some(_details) = messages.get("opentracing:tcp_response") {
+        let key = key_of(header, details);
+        println!("*** USING KEY {}", key);
+        db.insert(key, OtelSpanContext { span });
+
+        // span is no longer active after this point...
+    } else if let Some(details) = messages.get("opentracing:http_response") {
         let mut db = db.lock().unwrap();
-        let id: String = header.stream_id.to_string();
+        let id: String = key_of(header, details);
         if let Some(ctx) = db.remove(&id) {
+            println!("---------------------------");
+            println!("Terminating span ???");
+            println!("---------------------------");
             let mut span = ctx.span;
             span.end();
+        }
+        else {
+
+            println!("---------------------------");
+            println!("UNABLE to Terminate span !?!");
+            println!("---------------------------");
         }
     }
 
 
 
     Ok(Some(actions))
+}
+
+fn key_of(header: &FrameHeader, details: &HashMap<String,TypedData>) -> String {
+    format!("{}::{}", header.stream_id.to_string(), details.get("id").unwrap())
 }
 
 impl TypedData {
