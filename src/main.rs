@@ -19,12 +19,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(v) => v.parse::<u32>(),
         Err(e) => panic!("No port defined: {}", e)
     }.unwrap();
+    let service_name = match env::var("SERVICE_NAME") {
+        Ok(v) => v,
+        Err(_) => "spoa".to_string()
+    };
 
     let addr = format!("0.0.0.0:{}", port);
     println!("Starting Agent on {}", addr);
     let listener = TcpListener::bind(addr).await?;
 
-    let _ = init_tracer();
+    let _ = init_tracer(service_name);
     let otel_ctx = new_otel_context();
     loop {
         let (socket, addr) = listener.accept().await?;
