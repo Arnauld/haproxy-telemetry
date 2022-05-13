@@ -40,14 +40,33 @@ services:
       - jaeger-all-in-one
 
   # haproxy
-  haproxy:
+  haproxy-1:
     image: haproxy:2.5.6-alpine
     depends_on:
       - fake-server
+    environment:
+      FRONTEND_PORT_WITH_SPOA: 7001
+      FRONTEND_PORT_WITHOUT_SPOA: 8001
+      BACKEND_ADDRESS: "haproxy-2:7002"
     volumes:
       - ./conf/haproxy.conf:/usr/local/etc/haproxy/haproxy.cfg
       - ./conf/spoe.cfg:/usr/local/etc/haproxy/spoe.cfg
     ports:
-      - "7000:7000"
-      - "8000:8000"
-      - "7004:7004"
+      - "7001:7001"
+      - "8001:8001"
+
+  # haproxy
+  haproxy-2:
+    image: haproxy:2.5.6-alpine
+    depends_on:
+      - haproxy-1
+    environment:
+      FRONTEND_PORT_WITH_SPOA: 7002
+      FRONTEND_PORT_WITHOUT_SPOA: 8002
+      BACKEND_ADDRESS: "fake-server:8080"
+    volumes:
+      - ./conf/haproxy.conf:/usr/local/etc/haproxy/haproxy.cfg
+      - ./conf/spoe.cfg:/usr/local/etc/haproxy/spoe.cfg
+    ports:
+      - "7002:7002"
+      - "8002:8002"

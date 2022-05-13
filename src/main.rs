@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-
+use std::env;
 use tokio::net::{TcpListener, TcpStream};
 
 pub use connection::Connection;
@@ -15,7 +15,12 @@ use crate::otel::{handle_notify as otel_spoa_notify, init_tracer, new_otel_conte
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "0.0.0.0:7001";
+    let port = match env::var("PORT") {
+        Ok(v) => v.parse::<u32>(),
+        Err(e) => panic!("No port defined: {}", e)
+    }.unwrap();
+
+    let addr = format!("0.0.0.0:{}", port);
     println!("Starting Agent on {}", addr);
     let listener = TcpListener::bind(addr).await?;
 
