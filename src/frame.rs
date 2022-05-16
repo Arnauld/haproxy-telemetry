@@ -1,5 +1,5 @@
-//! Provides a type representing a Redis protocol frame as well as utilities for
-//! parsing frames from a byte array.
+//! Provides a type representing a SPOE protocol frame as well as utilities for
+//! parsing frames from a byte array; a write frame as a byte array.
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -335,7 +335,15 @@ impl Frame {
             .map_err(|e| Error::InvalidFrame(FrameError::InvalidFramePayload(e)))
     }
 
-    pub fn write_to(&self, dst: &mut BytesMut) -> Result<(), Error> {
+    pub fn write_to(&self, full: &mut BytesMut) -> Result<(), Error> {
+        let mut buff = BytesMut::new();
+        self.write_frame_to(&mut buff).unwrap();
+
+        full.put_u32(buff.len() as u32);
+        full.put_slice(&buff[..]);
+        Ok(())
+    }
+    fn write_frame_to(&self, dst: &mut BytesMut) -> Result<(), Error> {
         match &self {
             Frame::AgentHello { header, content } => {
                 write_frame_header(dst, header).unwrap();

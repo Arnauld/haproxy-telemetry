@@ -1,27 +1,25 @@
-use std::collections::HashMap;
 use std::env;
 use tokio::net::{TcpListener, TcpStream};
 
 pub use connection::Connection;
-use frame::{Action, Error, Frame, FrameHeader, FrameType, ListOfMessages, TypedData};
-use crate::frame::KVList;
+use frame::{Action, Error, Frame, FrameHeader, FrameType, KVList, ListOfMessages, TypedData};
 
 mod connection;
-
 mod frame;
-
 mod otel;
-use crate::otel::{handle_notify as otel_spoa_notify, init_tracer, new_otel_context, OtelContext};
+
+use otel::{handle_notify as otel_spoa_notify, init_tracer, new_otel_context, OtelContext};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = match env::var("PORT") {
         Ok(v) => v.parse::<u32>(),
-        Err(e) => panic!("No port defined: {}", e)
-    }.unwrap();
+        Err(e) => panic!("No port defined: {}", e),
+    }
+    .unwrap();
     let service_name = match env::var("SERVICE_NAME") {
         Ok(v) => v,
-        Err(_) => "spoa".to_string()
+        Err(_) => "spoa".to_string(),
     };
 
     let addr = format!("0.0.0.0:{}", port);

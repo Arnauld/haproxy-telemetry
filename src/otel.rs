@@ -1,9 +1,8 @@
-use crate::frame::{Action, ActionVarScope, Error, Frame, FrameHeader, TypedData, ListOfMessages};
-use opentelemetry::global::{BoxedSpan, ObjectSafeTracer};
+use crate::frame::{Action, ActionVarScope, Error, FrameHeader, KVList, ListOfMessages, TypedData};
+use opentelemetry::global::BoxedSpan;
 use opentelemetry::sdk::Resource;
 use opentelemetry::trace::{Span, TraceError, TraceFlags};
 use opentelemetry::{global, sdk, sdk::trace as sdktrace, trace::Tracer, Key, KeyValue};
-use std::borrow::{Borrow, BorrowMut};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -30,7 +29,6 @@ pub fn new_otel_context() -> OtelContext {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-
 const TRACEPARENT_HEADER: &str = "traceparent";
 const TRACESTATE_HEADER: &str = "tracestate";
 
@@ -51,7 +49,7 @@ pub fn handle_notify(
         let tracer = global::tracer("my_service");
         let mut span = tracer.start("my_span");
         for (k, v) in details {
-            let mut key = Key::new(k.to_owned());
+            let key = Key::new(k.to_owned());
             let attr = v.as_value(key);
             span.set_attribute(attr);
         }
@@ -60,7 +58,7 @@ pub fn handle_notify(
         if span_context.is_valid() {
             let header_value = format!(
                 "{:02x}-{:032x}-{:016x}-{:02x}",
-                1, //SUPPORTED_VERSION,
+                0, //SUPPORTED_VERSION,
                 span_context.trace_id(),
                 span_context.span_id(),
                 span_context.trace_flags() & TraceFlags::SAMPLED
@@ -79,19 +77,36 @@ pub fn handle_notify(
         }
 
         let mut db = db.lock().unwrap();
-        db.insert(header.stream_id.to_string(), OtelSpanContext { span });
-    } else if let Some(_details) = messages.get("opentracing:http_response") {
+        let key = key_of(header, details);
+        println!("*** USING KEY {}", key);
+        db.insert(key, OtelSpanContext { span });
+
+        // span is no longer active after this point...
+    } else if let Some(details) = messages.get("opentracing:http_response") {
         let mut db = db.lock().unwrap();
-        let id: String = header.stream_id.to_string();
+        let id: String = key_of(header, details);
         if let Some(ctx) = db.remove(&id) {
+            println!("---------------------------");
+            println!("Terminating span ???");
+            println!("---------------------------");
             let mut span = ctx.span;
             span.end();
+        } else {
+            println!("---------------------------");
+            println!("UNABLE to Terminate span !?!");
+            println!("---------------------------");
         }
     }
 
-
-
     Ok(Some(actions))
+}
+
+fn key_of(header: &FrameHeader, details: &KVList) -> String {
+    let str_id = match details.iter().find(|(k, _)| k == "id").unwrap() {
+        (_, TypedData::STRING(s)) => s,
+        _ => "::",
+    };
+    format!("{}::{}", header.stream_id.to_string(), str_id)
 }
 
 impl TypedData {
