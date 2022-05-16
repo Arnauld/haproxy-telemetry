@@ -1,32 +1,150 @@
 # HAProxy Telemetry
 
+## HAProxy SPOE events/OTEL spans mapping
+
+[plantuml, target=overview, format=svg]
+....
+@startuml
+participant User
+
+User -> HAProxy: tcp
+activate HAProxy
+
+HAProxy -> SPOA: on-client-session
+activate SPOA
+SPOA -> "SPAN/HAProxy session"
+activate "SPAN/HAProxy session"
+"SPAN/HAProxy session" -> "SPAN/Client session": child-of
+activate "SPAN/Client session"
+SPOA --> HAProxy
+deactivate SPOA
+
+HAProxy -> SPOA: on-frontend-tcp-request
+activate SPOA
+SPOA --> "SPAN/Client session"
+"SPAN/Client session" -> "SPAN/Frontend TCP request": child-of
+activate "SPAN/Frontend TCP request"
+HAProxy -> HAProxy: frontend/tcp-request content rules
+SPOA --> HAProxy
+deactivate SPOA
+
+HAProxy -> SPOA: on-frontend-http-request
+activate SPOA
+SPOA --> "SPAN/Frontend TCP request"
+"SPAN/Frontend TCP request" -> "SPAN/Frontend HTTP request": follows from
+activate "SPAN/Frontend HTTP request"
+deactivate "SPAN/Frontend TCP request"
+SPOA --> HAProxy
+deactivate SPOA
+HAProxy -> HAProxy: frontend/http-request content rules
+
+HAProxy -> SPOA: on-backend-tcp-request
+activate SPOA
+SPOA --> "SPAN/Frontend HTTP request"
+"SPAN/Frontend HTTP request" -> "SPAN/Backend TCP request": follows from
+activate "SPAN/Backend TCP request"
+deactivate "SPAN/Frontend HTTP request"
+SPOA --> HAProxy
+deactivate SPOA
+HAProxy -> HAProxy: backend/tcp-request content rules
+
+HAProxy -> SPOA: on-backend-http-request
+activate SPOA
+SPOA --> "SPAN/Backend TCP request"
+"SPAN/Backend TCP request" -> "SPAN/Backend HTTP request": follows from
+activate "SPAN/Backend HTTP request"
+deactivate "SPAN/Backend TCP request"
+SPOA --> HAProxy
+deactivate SPOA
+HAProxy -> HAProxy: backend/http-request content rules
+
+HAProxy -> SPOA: on-server-session
+activate SPOA
+SPOA --> "SPAN/HAProxy session"
+"SPAN/HAProxy session" -> "SPAN/Server session": child-of
+activate "SPAN/Server session"
+SPOA --> "SPAN/Backend HTTP request"
+deactivate "SPAN/Backend HTTP request"
+SPOA --> HAProxy
+deactivate SPOA
+
+HAProxy -> SPOA: on-tcp-response
+activate SPOA
+SPOA --> "SPAN/Server session"
+"SPAN/Server session" -> "SPAN/TCP response": child of
+activate "SPAN/TCP response"
+SPOA --> HAProxy
+deactivate SPOA
+
+
+HAProxy -> SPOA: on-http-response
+activate SPOA
+SPOA --> "SPAN/TCP response"
+"SPAN/TCP response" -> "SPAN/HTTP response"
+activate "SPAN/HTTP response"
+deactivate "SPAN/TCP response"
+SPOA --> "SPAN/Server session"
+deactivate "SPAN/Server session"
+SPOA --> "SPAN/HTTP response"
+deactivate "SPAN/HTTP response"
+SPOA --> "SPAN/Client session"
+deactivate "SPAN/Client session"
+SPOA --> "SPAN/HAProxy session"
+deactivate "SPAN/HAProxy session"
+SPOA --> HAProxy
+deactivate SPOA
+
+
+HAProxy -> User: http/response
+
+
+deactivate HAProxy
+
+@enduml
+....
+
 ## Development setup
 
 ### Overview
 
-[source, ditaa]
+[ditaa, target=ditaa, format=svg]
 ....
-     | frontend :7000 with SPOA
-     | frontend :8000   no SPOA
-     |
- +---v-------------+
- | HAProxy         |  (devenv/conf/haproxy.conf)
- |                 |
- |        +------+ |
- |        | SPOE | |  (devenv/conf/spoe.cfg)
- |        +----.-+ |
- |             |   |
- |   backends  |   |
- |   +------+--v---+
- |   |      |      |
- +---+--.---+---.--+
-        |       |     :7001 +-------------+
-        |       +----------->    SPOA     |
-        |          SPOP     +-----.-------+
-  :8080 |                         |
- +------v-----+             +-----v-------+
- | FakeServer |------------>| OTEL/jaeger |
- +------------+             +-------------+
+      |     |
+      |     |
+  7001v     v8001
+  +-----------------+
+  | HAProxy~1       |
+  |                 |
+  |        +------+ |
+  |        | SPOE | |
+  |        +----+-+ |
+  |             |   |
+  |             v   |
+  | +----+----+-----+
+  | |    |    | cBLU|
+  +-+-+--+--+-+--+--+             +-------------------+
+      |     |    |                | 700x with SPOA {d}|
+      |     |    \-------\        | 800x no SPOA  cFE7|
+  7002v     v8002        |        +-------------------/
+  +-----------------+    |
+  | HAProxy~2       |    |
+  |                 |    |
+  |        +------+ |    |       (devenv/conf/haproxy~2.conf)
+  |        | SPOE | |    |       (devenv/conf/spoe.cfg)
+  |        +----+-+ |    |
+  |             |   |    |
+  |   backends  v   |    |
+  |   +-------+-----+    |
+  |   |       | cBLU|    |   +-------------+
+  +---+--+----+--+--+    \-->|    SPOA     |
+         |       |     :7000 |             |
+         |       +---------->|        cBLU |
+         |          SPOP     +-----+-------+
+         |                         |
+   :8080 v                         v
+  +------------+             +-------------+
+  | FakeServer +------------>| OTEL/jaeger |
+  +------------+             +-------------+
 ....
 
 ### Start local setup

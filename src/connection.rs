@@ -1,6 +1,6 @@
 use crate::frame::{Error, Frame};
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{BytesMut};
 use std::io::Cursor;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::TcpStream;
@@ -148,12 +148,8 @@ impl Connection {
     /// write stream. The data will be written to the buffer. Once the buffer is
     /// full, it is flushed to the underlying socket.
     pub async fn write_frame(&mut self, frame: &Frame) -> Result<(), Error> {
-        let mut buff = BytesMut::new();
-        frame.write_to(&mut buff).unwrap();
-
         let mut full = BytesMut::new();
-        full.put_u32(buff.len() as u32);
-        full.put_slice(&buff[..]);
+        frame.write_to(&mut full).unwrap();
 
         self.stream
             .write_all(&full[..])

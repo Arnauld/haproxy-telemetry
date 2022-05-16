@@ -1,5 +1,5 @@
-//! Provides a type representing a Redis protocol frame as well as utilities for
-//! parsing frames from a byte array.
+//! Provides a type representing a SPOE protocol frame as well as utilities for
+//! parsing frames from a byte array; a write frame as a byte array.
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -14,24 +14,27 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 const U32_LENGTH: usize = std::mem::size_of::<u32>();
 
+pub type KVList = Vec<(String, TypedData)>;
+pub type ListOfMessages = HashMap<String, KVList>;
+
 /// A frame in the SPOP protocol.
 #[derive(Clone, Debug)]
 pub enum Frame {
     HAProxyHello {
         header: FrameHeader,
-        content: HashMap<String, TypedData>,
+        content: KVList,
     },
     HAProxyDisconnect {
         header: FrameHeader,
-        content: HashMap<String, TypedData>,
+        content: KVList,
     },
     Notify {
         header: FrameHeader,
-        messages: HashMap<String, HashMap<String, TypedData>>,
+        messages: ListOfMessages,
     },
     AgentHello {
         header: FrameHeader,
-        content: HashMap<String, TypedData>,
+        content: KVList,
     },
     AgentDisconnect {
         header: FrameHeader,
@@ -101,6 +104,17 @@ pub struct FrameHeader {
     pub flags: FrameFlags,
     pub stream_id: u64,
     pub frame_id: u64,
+}
+
+impl FrameHeader {
+    pub fn reply_header(&self, frame_type: &FrameType) -> FrameHeader {
+        FrameHeader {
+            frame_id: self.frame_id,
+            stream_id: self.stream_id,
+            flags: FrameFlags::new(true, false),
+            r#type: frame_type.to_owned(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -321,7 +335,15 @@ impl Frame {
             .map_err(|e| Error::InvalidFrame(FrameError::InvalidFramePayload(e)))
     }
 
-    pub fn write_to(&self, dst: &mut BytesMut) -> Result<(), Error> {
+    pub fn write_to(&self, full: &mut BytesMut) -> Result<(), Error> {
+        let mut buff = BytesMut::new();
+        self.write_frame_to(&mut buff).unwrap();
+
+        full.put_u32(buff.len() as u32);
+        full.put_slice(&buff[..]);
+        Ok(())
+    }
+    fn write_frame_to(&self, dst: &mut BytesMut) -> Result<(), Error> {
         match &self {
             Frame::AgentHello { header, content } => {
                 write_frame_header(dst, header).unwrap();
@@ -334,6 +356,20 @@ impl Frame {
                 Ok(())
             }
             _ => Err(Error::NotSupported),
+        }
+    }
+
+    pub fn frame_header(&self) -> &FrameHeader {
+        match self {
+            Frame::HAProxyHello { header, content: _ } => header,
+            Frame::HAProxyDisconnect { header, content: _ } => header,
+            Frame::Notify {
+                header,
+                messages: _,
+            } => header,
+            Frame::AgentHello { header, content: _ } => header,
+            Frame::AgentDisconnect { header } => header,
+            Frame::Ack { header, actions: _ } => header,
         }
     }
 }
@@ -472,19 +508,19 @@ pub fn parse_action_scope(src: &mut Cursor<&[u8]>) -> Result<ActionVarScope, Act
 
 pub fn parse_list_of_messages(
     src: &mut Cursor<&[u8]>,
-) -> Result<HashMap<String, HashMap<String, TypedData>>, ListOfMessagesError> {
-    let mut messages = HashMap::<String, HashMap<String, TypedData>>::new();
+) -> Result<HashMap<String, KVList>, ListOfMessagesError> {
+    let mut messages = HashMap::<String, KVList>::new();
     while src.has_remaining() {
         let message_name =
             parse_string(src).map_err(|e| ListOfMessagesError::InvalidMessageName(e))?;
         let nb_args = src.get_u8();
 
-        let mut message_content = HashMap::<String, TypedData>::new();
+        let mut message_content = KVList::new();
         for _ in 0..nb_args {
             let name = parse_string(src).map_err(|e| ListOfMessagesError::InvalidKVListName(e))?;
             let value =
                 parse_typed_data(src).map_err(|e| ListOfMessagesError::InvalidKVListValue(e))?;
-            message_content.insert(name, value);
+            message_content.push((name, value));
         }
 
         messages.insert(message_name, message_content);
@@ -492,18 +528,18 @@ pub fn parse_list_of_messages(
     Ok(messages)
 }
 
-pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<HashMap<String, TypedData>, KVListError> {
-    let mut body = HashMap::<String, TypedData>::new();
+pub fn parse_kv_list(src: &mut Cursor<&[u8]>) -> Result<KVList, KVListError> {
+    let mut body = KVList::new();
     while src.has_remaining() {
         let name = parse_string(src).map_err(|e| KVListError::InvalidKVListName(e))?;
         let value = parse_typed_data(src).map_err(|e| KVListError::InvalidKVListValue(e))?;
-        body.insert(name, value);
+        body.push((name, value));
     }
     Ok(body)
 }
 
-pub fn write_kv_list(dst: &mut BytesMut, hash: &HashMap<String, TypedData>) -> Result<(), Error> {
-    for (k, v) in hash {
+pub fn write_kv_list(dst: &mut BytesMut, list: &KVList) -> Result<(), Error> {
+    for (k, v) in list {
         write_string(dst, k).unwrap();
         write_typed_data(dst, v).unwrap();
     }
@@ -679,7 +715,7 @@ pub fn parse_frame_header(src: &mut Cursor<&[u8]>) -> Result<FrameHeader, FrameH
 }
 
 pub fn write_frame_header(dst: &mut BytesMut, frame_header: &FrameHeader) -> Result<(), Error> {
-    &frame_header.r#type.write_to(dst).unwrap();
+    let _ = &frame_header.r#type.write_to(dst).unwrap();
     let frame_flags = &frame_header.flags;
     let frame_flags_raw: u32 = frame_flags.0;
     dst.put_u32(frame_flags_raw);
@@ -773,6 +809,23 @@ impl fmt::Display for Error {
             Error::None => write!(f, "<none>"),
             Error::IO(err) => err.fmt(f),
             Error::Other(err) => err.fmt(f),
+        }
+    }
+}
+
+impl fmt::Display for TypedData {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TypedData::NULL => write!(f, "<null>"),
+            TypedData::BOOL(v) => write!(f, "{}", v),
+            TypedData::INT32(v) => write!(f, "{}", v),
+            TypedData::UINT32(v) => write!(f, "{}", v),
+            TypedData::INT64(v) => write!(f, "{}", v),
+            TypedData::UINT64(v) => write!(f, "{}", v),
+            TypedData::IPV4(v) => write!(f, "{}", v),
+            TypedData::IPV6(v) => write!(f, "{}", v),
+            TypedData::STRING(v) => write!(f, "{}", v),
+            TypedData::BINARY(_) => write!(f, "<binary>"),
         }
     }
 }
