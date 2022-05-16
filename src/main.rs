@@ -12,6 +12,13 @@ use otel::{handle_notify as otel_spoa_notify, init_tracer, new_otel_context, Ote
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if env::var_os("RUST_LOG").is_none() {
+        // Set `RUST_LOG=jwtd=debug` to see debug logs,
+        // info - only shows access logs.
+        env::set_var("RUST_LOG", "haproxy_spoa_rust=debug");
+    }
+    pretty_env_logger::init();
+
     let port = match env::var("PORT") {
         Ok(v) => v.parse::<u32>(),
         Err(e) => panic!("No port defined: {}", e),
@@ -23,14 +30,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let addr = format!("0.0.0.0:{}", port);
-    println!("Starting Agent on {}", addr);
+    log::info!("Starting Agent on {}", addr);
     let listener = TcpListener::bind(addr).await?;
 
     let _ = init_tracer(service_name);
     let otel_ctx = new_otel_context();
     loop {
         let (socket, addr) = listener.accept().await?;
-        println!("New socket opened from {:?}", addr);
+        log::info!("New socket opened from {:?}", addr);
 
         let otel_ctx: OtelContext = otel_ctx.clone();
         tokio::spawn(async move {
@@ -112,20 +119,20 @@ async fn process(socket: TcpStream, otel_ctx: OtelContext, notify_handler: Notif
 
     loop {
         if let Some(frame) = connection.read_frame().await.unwrap() {
-            println!("GOT: {:?}", frame);
+            log::debug!("Processing frame {:?}", frame);
 
             match handle_frame(&frame, &otel_ctx, notify_handler) {
                 Ok(response) => {
-                    println!("REP: {:?}", response);
+                    log::debug!("Response {:?}", response);
                     connection.write_frame(&response).await.unwrap();
                 }
                 Err(Error::Disconnect) => {
-                    println!("Disconnecting");
+                    log::info!("Disconnecting");
                     // break the loop
                     return;
                 }
                 Err(err) => {
-                    println!("ERR: {:?}", err);
+                    log::error!("ERROR: {:?}", err);
                 }
             }
         }

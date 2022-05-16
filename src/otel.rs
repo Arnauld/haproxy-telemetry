@@ -37,11 +37,8 @@ pub fn handle_notify(
     header: &FrameHeader,
     messages: &ListOfMessages,
 ) -> Result<Option<Vec<Action>>, Error> {
-    for (k, _v) in messages {
-        println!("======================");
-        println!("MSG: {}", k);
-        println!("======================");
-    }
+    let msgs: Vec<String> = messages.iter().map(|(k, v)| k.to_string()).collect();
+    log::debug!("Notify/Messages {:?}", msgs);
 
     let mut actions: Vec<Action> = vec![];
 
@@ -78,23 +75,17 @@ pub fn handle_notify(
 
         let mut db = db.lock().unwrap();
         let key = key_of(header, details);
-        println!("*** USING KEY {}", key);
+        log::debug!("otel/frame key {}", key);
         db.insert(key, OtelSpanContext { span });
-
-        // span is no longer active after this point...
     } else if let Some(details) = messages.get("opentracing:http_response") {
         let mut db = db.lock().unwrap();
-        let id: String = key_of(header, details);
-        if let Some(ctx) = db.remove(&id) {
-            println!("---------------------------");
-            println!("Terminating span ???");
-            println!("---------------------------");
+        let key: String = key_of(header, details);
+        if let Some(ctx) = db.remove(&key) {
+            log::debug!("otel/frame discarding key {}", key);
             let mut span = ctx.span;
             span.end();
         } else {
-            println!("---------------------------");
-            println!("UNABLE to Terminate span !?!");
-            println!("---------------------------");
+            log::warn!("otel/frame no span found corresponding to key {}", key);
         }
     }
 

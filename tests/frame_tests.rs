@@ -1,7 +1,7 @@
 use bytes::BytesMut;
 use haproxy_spoa_rust::frame::{Error, Frame, KVList, TypedData};
-use std::io::Cursor;
 use std::fmt::Write;
+use std::io::Cursor;
 
 fn to_hex_string(raw: &[u8]) -> String {
     let mut s = String::new();
@@ -21,16 +21,30 @@ fn from_hex_string(raw: &str) -> Vec<u8> {
 }
 
 fn assert_content_contains_string(content: &KVList, key: &str, value: &str) {
-    match content.iter().find(|(k, _)| k == key).expect(format!("Key not found: '{}' in {:?}", key, content).as_str()) {
+    match content
+        .iter()
+        .find(|(k, _)| k == key)
+        .expect(format!("Key not found: '{}' in {:?}", key, content).as_str())
+    {
         (_, TypedData::STRING(s)) => assert_eq!(s, &value.to_string()),
-        _ => panic!("Invalid value type associated to key {}: {:?}", key, content),
+        _ => panic!(
+            "Invalid value type associated to key {}: {:?}",
+            key, content
+        ),
     };
 }
 
 fn assert_content_contains_uint32(content: &KVList, key: &str, value: u32) {
-    match content.iter().find(|(k, _)| k == key).expect(format!("Key not found: '{}' in {:?}", key, content).as_str()) {
+    match content
+        .iter()
+        .find(|(k, _)| k == key)
+        .expect(format!("Key not found: '{}' in {:?}", key, content).as_str())
+    {
         (_, TypedData::UINT32(v)) => assert_eq!(v, &value),
-        _ => panic!("Invalid value type associated to key {}: {:?}", key, content),
+        _ => panic!(
+            "Invalid value type associated to key {}: {:?}",
+            key, content
+        ),
     };
 }
 
@@ -46,7 +60,6 @@ fn write_frame(frame: &Frame) -> String {
 
     to_hex_string(&mut full[..])
 }
-
 
 #[allow(non_snake_case)]
 #[test]
@@ -102,7 +115,9 @@ fn should_parse_Notify_frame() {
             assert_eq!(header.stream_id, 2);
             assert_eq!(header.flags.is_fin(), true);
             assert_eq!(header.flags.is_abort(), false);
-            let msg = messages.get("opentracing:frontend_tcp_request").expect("<opentracing:frontend_tcp_request> message not found");
+            let msg = messages
+                .get("opentracing:frontend_tcp_request")
+                .expect("<opentracing:frontend_tcp_request> message not found");
             assert_content_contains_string(&msg, "id", "61b57ef0-24bb-42c7-8935-aedd276af4a5:0008");
             assert_content_contains_string(&msg, "span", "Frontend TCP request");
             assert_content_contains_string(&msg, "child-of", "Client session");

@@ -1,6 +1,6 @@
 use crate::frame::{Error, Frame};
 
-use bytes::{BytesMut};
+use bytes::BytesMut;
 use std::io::Cursor;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::TcpStream;
@@ -26,6 +26,9 @@ pub struct Connection {
 
     // The buffer for reading frames.
     buffer: BytesMut,
+
+    // Debug purpose only; trame sent is reparsed
+    reparse_outgoing: bool,
 }
 
 impl Connection {
@@ -39,6 +42,8 @@ impl Connection {
             // value to their specific use case. There is a high likelihood that
             // a larger read buffer will work better.
             buffer: BytesMut::with_capacity(4 * 1024),
+
+            reparse_outgoing: false,
         }
     }
 
@@ -110,7 +115,7 @@ impl Connection {
                 let frame_bytes = self.buffer.split_to(len);
                 let mut frame_buffer = Cursor::new(&frame_bytes[..]);
 
-                println!("<<< {:x?}", &frame_bytes.as_ref());
+                log::trace!("<<< {:x?}", &frame_bytes.as_ref());
 
                 // Parse the frame from the buffer. This allocates the necessary
                 // structures to represent the frame and returns the frame
@@ -157,11 +162,13 @@ impl Connection {
             .map_err(|io| Error::IO(io))
             .unwrap();
 
-        println!(">>> {:x?}", &full[..]);
-        // reparse to check ;)
-        let mut frame_buffer = Cursor::new(&full[..]);
-        let frame = Frame::parse(&mut frame_buffer)?;
-        println!(">>> {:?}", frame);
+        log::trace!(">>> {:x?}", &full[..]);
+        if self.reparse_outgoing {
+            // reparse to check ;)
+            let mut frame_buffer = Cursor::new(&full[..]);
+            let frame = Frame::parse(&mut frame_buffer)?;
+            log::trace!(">>> {:?}", frame);
+        }
 
         // Ensure the encoded frame is written to the socket. The calls above
         // are to the buffered stream and writes. Calling `flush` writes the

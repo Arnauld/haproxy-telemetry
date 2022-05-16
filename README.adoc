@@ -175,7 +175,7 @@ curl http://localhost:7000
 
 [source,bash]
 ....
-RUST_BACKTRACE=1 cargo run
+RUST_BACKTRACE=1 PORT=7000 cargo run
 ....
 
 ## Resources
