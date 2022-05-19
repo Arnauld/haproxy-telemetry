@@ -116,7 +116,9 @@ fn should_parse_Notify_frame() {
             assert_eq!(header.flags.is_fin(), true);
             assert_eq!(header.flags.is_abort(), false);
             let msg = messages
-                .get("opentracing:frontend_tcp_request")
+                .iter()
+                .find(|(k,_)| k == "opentracing:frontend_tcp_request")
+                .map(|(_,kv_list)| kv_list)
                 .expect("<opentracing:frontend_tcp_request> message not found");
             assert_content_contains_string(&msg, "id", "61b57ef0-24bb-42c7-8935-aedd276af4a5:0008");
             assert_content_contains_string(&msg, "span", "Frontend TCP request");

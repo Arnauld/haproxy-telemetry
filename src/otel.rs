@@ -96,45 +96,53 @@ pub fn handle_notify(
 
     let mut actions: Vec<Action> = vec![];
 
-    if let Some(details) = messages.get("opentracing:frontend_tcp_request") {
-        let tracer = global::tracer("my_service");
-        let mut span = tracer.start("frontend_tcp_request");
-        fill_span_with_details(details, &mut span);
-
+    for (message, details) in messages {
         let key = key_of(header, details);
-        track_span(db, key, span);
-    } else if let Some(details) = messages.get("opentracing:frontend_http_request") {
-        log::info!("==========================================================================");
-        log::info!("otel/frame details {:?}", details);
-        log::info!("==========================================================================");
-        //
-        let key: String = key_of(header, details);
-        end_span(db, &key);
 
-        let propagator = TraceContextPropagator::new();
-        //
-        let ex = &KVListExtractor(details);
-        let context = propagator.extract(ex);
-        let tracer = global::tracer("my_service");
-        let mut span = if context.has_active_span() {
-            log::info!("Active span detected!");
-            tracer.start_with_context("frontend_http_request", &context)
-        } else {
-            log::info!("No active span detected :s");
-            tracer.start("frontend_http_request")
-        };
-        
-        fill_span_with_details(details, &mut span);
+        if message.eq_ignore_ascii_case("opentracing:frontend_tcp_request") {
+            let tracer = global::tracer("my_service");
+            let mut span = tracer.start("frontend_tcp_request");
+            fill_span_with_tags(&mut span, details);
 
-        log::info!("Span context {:?}", &span.span_context());
-        let injector = &mut ActionInjector(&mut actions);
-        //-- span is not in *current* context...  propagator.inject(injector);
-        injector.apply_context(span.span_context());
+            track_span(db, key, span);
+        }
+        else if message.eq_ignore_ascii_case("opentracing:frontend_http_request") {
+            log::info!("==========================================================================");
+            log::info!("otel/frame details {:?}", details);
+            log::info!("==========================================================================");
+            //
+            let key: String = key_of(header, details);
 
-        track_span(db, key, span);
-    } else if let Some(details) = messages.get("opentracing:http_response") {
-        let key: String = key_of(header, details);
-        end_span(db, &key);
+            // terminate previous span, if any
+            end_span(db, &key);
+
+            let propagator = TraceContextPropagator::new();
+            //
+            let extractor = &KVListExtractor(details);
+            let context = propagator.extract(extractor);
+            let tracer = global::tracer("my_service");
+            let mut span = if context.has_active_span() {
+                log::info!("Active span detected!");
+                tracer.start_with_context("frontend_http_request", &context)
+            } else {
+                log::info!("No active span detected :s");
+                tracer.start("frontend_http_request")
+            };
+
+            fill_span_with_tags(&mut span, details);
+
+            log::info!("Span context {:?}", &span.span_context());
+            let injector = &mut ActionInjector(&mut actions);
+            //-- span is not in *current* context...
+            // propagator.inject(injector);
+            injector.apply_context(span.span_context());
+
+            track_span(db, key, span);
+        }
+        else if message.eq_ignore_ascii_case("opentracing:http_response"){
+            let key: String = key_of(header, details);
+            end_span(db, &key);
+        }
     }
 
     Ok(Some(actions))
@@ -157,11 +165,21 @@ fn end_span(db: &OtelContext, key: &String)  {
     }
 }
 
-fn fill_span_with_details(details: &KVList, span: &mut BoxedSpan) {
+trait TagAware {
+    fn set_tag(&mut self, attr: KeyValue);
+}
+
+impl TagAware for BoxedSpan {
+    fn set_tag(&mut self, attr: KeyValue) {
+        self.set_attribute(attr);
+    }
+}
+
+fn fill_span_with_tags<S:TagAware>(span: &mut S, details: &KVList) {
     for (k, v) in details {
         let key = Key::new(k.to_owned());
         let attr = v.as_value(key);
-        span.set_attribute(attr);
+        span.set_tag(attr);
     }
 }
 

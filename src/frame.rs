@@ -1,7 +1,6 @@
 //! Provides a type representing a SPOE protocol frame as well as utilities for
 //! parsing frames from a byte array; a write frame as a byte array.
 
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::Cursor;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -15,7 +14,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 const U32_LENGTH: usize = std::mem::size_of::<u32>();
 
 pub type KVList = Vec<(String, TypedData)>;
-pub type ListOfMessages = HashMap<String, KVList>;
+pub type ListOfMessages = Vec<(String, KVList)>;
 
 /// A frame in the SPOP protocol.
 #[derive(Clone, Debug)]
@@ -508,8 +507,8 @@ pub fn parse_action_scope(src: &mut Cursor<&[u8]>) -> Result<ActionVarScope, Act
 
 pub fn parse_list_of_messages(
     src: &mut Cursor<&[u8]>,
-) -> Result<HashMap<String, KVList>, ListOfMessagesError> {
-    let mut messages = HashMap::<String, KVList>::new();
+) -> Result< ListOfMessages, ListOfMessagesError> {
+    let mut messages = ListOfMessages::new();
     while src.has_remaining() {
         let message_name =
             parse_string(src).map_err(|e| ListOfMessagesError::InvalidMessageName(e))?;
@@ -523,7 +522,7 @@ pub fn parse_list_of_messages(
             message_content.push((name, value));
         }
 
-        messages.insert(message_name, message_content);
+        messages.push((message_name, message_content));
     }
     Ok(messages)
 }
