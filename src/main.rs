@@ -7,6 +7,7 @@ use frame::{Action, Error, Frame, FrameHeader, FrameType, KVList, ListOfMessages
 mod connection;
 mod frame;
 mod otel;
+mod proplists;
 
 use otel::{handle_notify as otel_spoa_notify, init_tracer, new_otel_context, OtelContext};
 

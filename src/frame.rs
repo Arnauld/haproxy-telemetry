@@ -507,7 +507,7 @@ pub fn parse_action_scope(src: &mut Cursor<&[u8]>) -> Result<ActionVarScope, Act
 
 pub fn parse_list_of_messages(
     src: &mut Cursor<&[u8]>,
-) -> Result< ListOfMessages, ListOfMessagesError> {
+) -> Result<ListOfMessages, ListOfMessagesError> {
     let mut messages = ListOfMessages::new();
     while src.has_remaining() {
         let message_name =

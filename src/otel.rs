@@ -1,12 +1,13 @@
 use crate::frame::{Action, ActionVarScope, Error, FrameHeader, KVList, ListOfMessages, TypedData};
+use crate::proplists::*;
 use opentelemetry::global::BoxedSpan;
+use opentelemetry::propagation::{Extractor, Injector, TextMapPropagator};
+use opentelemetry::sdk::propagation::TraceContextPropagator;
 use opentelemetry::sdk::Resource;
 use opentelemetry::trace::{Span, SpanContext, TraceContextExt, TraceError, TraceFlags};
 use opentelemetry::{global, sdk, sdk::trace as sdktrace, trace::Tracer, Key, KeyValue};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use opentelemetry::propagation::{Extractor, Injector, TextMapPropagator};
-use opentelemetry::sdk::propagation::TraceContextPropagator;
 
 pub struct OtelSpanContext {
     span: BoxedSpan,
@@ -44,12 +45,9 @@ impl<'a> Extractor for KVListExtractor<'a> {
 
     /// Collect all the keys from the KVList.
     fn keys(&self) -> Vec<&str> {
-        self.0.iter()
-            .map(|(k,_)| k.as_str())
-            .collect::<Vec<_>>()
+        self.0.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>()
     }
 }
-
 
 const SUPPORTED_VERSION: u8 = 0;
 const TRACEPARENT_HEADER: &str = "traceparent";
@@ -58,7 +56,6 @@ const TRACESTATE_HEADER: &str = "tracestate";
 pub struct ActionInjector<'a>(pub &'a mut Vec<Action>);
 
 impl<'a> ActionInjector<'a> {
-
     pub(crate) fn apply_context(&mut self, span_context: &SpanContext) {
         // https://github.com/open-telemetry/opentelemetry-rust/blob/main/opentelemetry-sdk/src/propagation/trace_context.rs#L115
         if span_context.is_valid() {
@@ -105,11 +102,14 @@ pub fn handle_notify(
             fill_span_with_tags(&mut span, details);
 
             track_span(db, key, span);
-        }
-        else if message.eq_ignore_ascii_case("opentracing:frontend_http_request") {
-            log::info!("==========================================================================");
+        } else if message.eq_ignore_ascii_case("opentracing:frontend_http_request") {
+            log::info!(
+                "=========================================================================="
+            );
             log::info!("otel/frame details {:?}", details);
-            log::info!("==========================================================================");
+            log::info!(
+                "=========================================================================="
+            );
             //
             let key: String = key_of(header, details);
 
@@ -138,8 +138,7 @@ pub fn handle_notify(
             injector.apply_context(span.span_context());
 
             track_span(db, key, span);
-        }
-        else if message.eq_ignore_ascii_case("opentracing:http_response"){
+        } else if message.eq_ignore_ascii_case("opentracing:http_response") {
             let key: String = key_of(header, details);
             end_span(db, &key);
         }
@@ -154,7 +153,7 @@ fn track_span(db: &OtelContext, key: String, span: BoxedSpan) {
     db.insert(key, OtelSpanContext { span });
 }
 
-fn end_span(db: &OtelContext, key: &String)  {
+fn end_span(db: &OtelContext, key: &String) {
     let mut db = db.lock().unwrap();
     if let Some(ctx) = db.remove(key) {
         log::debug!("otel/frame discarding key {}", key);
@@ -175,10 +174,10 @@ impl TagAware for BoxedSpan {
     }
 }
 
-fn fill_span_with_tags<S:TagAware>(span: &mut S, details: &KVList) {
-    for (k, v) in details {
-        let key = Key::new(k.to_owned());
-        let attr = v.as_value(key);
+fn fill_span_with_tags<S: TagAware>(span: &mut S, details: &KVList) {
+    let tags = extract_tags(details);
+    for (k, v) in tags {
+        let attr = Key::new(k.to_owned()).string(v);
         span.set_tag(attr);
     }
 }
@@ -192,7 +191,7 @@ fn key_of(header: &FrameHeader, details: &KVList) -> String {
 }
 
 impl TypedData {
-    pub fn as_value(&self, key: Key) -> KeyValue {
+    pub fn as_key_value(&self, key: Key) -> KeyValue {
         match self {
             TypedData::NULL => key.string("<null>"),
             TypedData::BOOL(v) => key.bool(*v),
@@ -205,5 +204,77 @@ impl TypedData {
             TypedData::STRING(s) => key.string(s.to_owned()),
             TypedData::BINARY(_) => key.string("<bin>"),
         }
+    }
+}
+
+fn extract_tags(details: &KVList) -> PropLists<String> {
+    let mut props = PropLists::new();
+
+    let mut tag_name: Option<String> = None;
+    let mut s = String::new();
+    for (k, v) in details {
+        // close previous potential tag
+        if k != "" {
+            if let Some(tag) = tag_name {
+                props.push(&tag, s.to_owned());
+                tag_name = None;
+                s = String::new();
+            }
+            if k == "tag" {
+                tag_name = Some(v.to_string());
+            }
+        }
+        // append only if within tag
+        else if tag_name.is_some() {
+            s.push_str(&v.to_string());
+        }
+    }
+    // any unclosed tag ?
+    if let Some(tag) = tag_name {
+        props.push(&tag, s.to_owned());
+    }
+    props
+}
+
+#[cfg(test)]
+mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+
+    fn sample_kv_list() -> KVList {
+        let details = &mut KVList::new();
+        details.push(as_tuple(
+            "id",
+            "haproxy-2:d9e05a62-79e4-4457-967d-a129ea6cf6c3:0008",
+        ));
+        details.push(as_tuple("span", "Frontend HTTP request"));
+        details.push(as_tuple("follows-from", "Frontend TCP request"));
+        details.push(as_tuple(
+            "traceparent",
+            "00-2ccb154527b07c593856c7bd539f5ee5-e79f6d458b7f9104-01",
+        ));
+        details.push(as_tuple("tracestate", ""));
+        details.push(as_tuple("tag", "http.method"));
+        details.push(as_tuple("", "GET"));
+        details.push(as_tuple("tag", "http.url"));
+        details.push(as_tuple("", "/"));
+        details.push(as_tuple("tag", "http.version"));
+        details.push(as_tuple("", "HTTP/"));
+        details.push(as_tuple("", "1.1"));
+        details.push(as_tuple("finish", "Frontend TCP request"));
+        details.to_vec()
+    }
+
+    fn as_tuple(k: &str, d: &str) -> (String, TypedData) {
+        (k.to_string(), TypedData::STRING(d.to_string()))
+    }
+
+    #[test]
+    fn test_extract_tags() {
+        let details = sample_kv_list();
+        let tags = extract_tags(&details);
+        assert_eq!(tags.first("http.method"), Some(&"GET".to_string()));
+        assert_eq!(tags.first("http.url"), Some(&"/".to_string()));
+        assert_eq!(tags.first("http.version"), Some(&"HTTP/1.1".to_string()));
     }
 }
