@@ -32,57 +32,6 @@ pub fn new_otel_context() -> OtelContext {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-pub struct KVListExtractor<'a>(pub &'a KVList);
-
-impl<'a> Extractor for KVListExtractor<'a> {
-    /// Get a value for a key from the KVList.  If the value is not valid ASCII, returns None.
-    fn get(&self, key: &str) -> Option<&str> {
-        match self.0.iter().find(|(k, _)| k == key).unwrap() {
-            (_, TypedData::STRING(s)) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Collect all the keys from the KVList.
-    fn keys(&self) -> Vec<&str> {
-        self.0.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>()
-    }
-}
-
-const SUPPORTED_VERSION: u8 = 0;
-const TRACEPARENT_HEADER: &str = "traceparent";
-const TRACESTATE_HEADER: &str = "tracestate";
-
-pub struct ActionInjector<'a>(pub &'a mut Vec<Action>);
-
-impl<'a> ActionInjector<'a> {
-    pub(crate) fn apply_context(&mut self, span_context: &SpanContext) {
-        // https://github.com/open-telemetry/opentelemetry-rust/blob/main/opentelemetry-sdk/src/propagation/trace_context.rs#L115
-        if span_context.is_valid() {
-            let header_value = format!(
-                "{:02x}-{:032x}-{:016x}-{:02x}",
-                SUPPORTED_VERSION,
-                span_context.trace_id(),
-                span_context.span_id(),
-                span_context.trace_flags() & TraceFlags::SAMPLED
-            );
-            self.set(TRACEPARENT_HEADER, header_value);
-            self.set(TRACESTATE_HEADER, span_context.trace_state().header());
-        }
-    }
-}
-
-impl<'a> Injector for ActionInjector<'a> {
-    /// Set a key and value in the HeaderMap.  Does nothing if the key or value are not valid inputs.
-    fn set(&mut self, key: &str, value: String) {
-        self.0.push(Action::SetVar {
-            scope: ActionVarScope::REQUEST,
-            name: key.to_string(),
-            value: TypedData::STRING(value),
-        });
-    }
-}
-
 pub fn handle_notify(
     db: &OtelContext,
     header: &FrameHeader,
@@ -234,6 +183,57 @@ fn extract_tags(details: &KVList) -> PropLists<String> {
         props.push(&tag, s.to_owned());
     }
     props
+}
+
+pub struct KVListExtractor<'a>(pub &'a KVList);
+
+impl<'a> Extractor for KVListExtractor<'a> {
+    /// Get a value for a key from the KVList.  If the value is not valid ASCII, returns None.
+    fn get(&self, key: &str) -> Option<&str> {
+        match self.0.iter().find(|(k, _)| k == key).unwrap() {
+            (_, TypedData::STRING(s)) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Collect all the keys from the KVList.
+    fn keys(&self) -> Vec<&str> {
+        self.0.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>()
+    }
+}
+
+const SUPPORTED_VERSION: u8 = 0;
+const TRACEPARENT_HEADER: &str = "traceparent";
+const TRACESTATE_HEADER: &str = "tracestate";
+
+pub struct ActionInjector<'a>(pub &'a mut Vec<Action>);
+
+impl<'a> ActionInjector<'a> {
+    pub(crate) fn apply_context(&mut self, span_context: &SpanContext) {
+        // https://github.com/open-telemetry/opentelemetry-rust/blob/main/opentelemetry-sdk/src/propagation/trace_context.rs#L115
+        if span_context.is_valid() {
+            let header_value = format!(
+                "{:02x}-{:032x}-{:016x}-{:02x}",
+                SUPPORTED_VERSION,
+                span_context.trace_id(),
+                span_context.span_id(),
+                span_context.trace_flags() & TraceFlags::SAMPLED
+            );
+            self.set(TRACEPARENT_HEADER, header_value);
+            self.set(TRACESTATE_HEADER, span_context.trace_state().header());
+        }
+    }
+}
+
+impl<'a> Injector for ActionInjector<'a> {
+    /// Set a key and value in the HeaderMap.  Does nothing if the key or value are not valid inputs.
+    fn set(&mut self, key: &str, value: String) {
+        self.0.push(Action::SetVar {
+            scope: ActionVarScope::REQUEST,
+            name: key.to_string(),
+            value: TypedData::STRING(value),
+        });
+    }
 }
 
 #[cfg(test)]
