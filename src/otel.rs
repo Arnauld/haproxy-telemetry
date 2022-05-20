@@ -32,6 +32,8 @@ pub fn new_otel_context() -> OtelContext {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+const SERVICE_NAME: &str = "haproxy_spoa";
+
 pub fn handle_notify(
     db: &OtelContext,
     header: &FrameHeader,
@@ -46,9 +48,9 @@ pub fn handle_notify(
         let key = key_of(header, details);
 
         if message.eq_ignore_ascii_case("opentracing:frontend_tcp_request") {
-            let tracer = global::tracer("my_service");
+            let tracer = global::tracer(SERVICE_NAME);
             let mut span = tracer.start("frontend_tcp_request");
-            fill_span_with_tags(&mut span, details);
+            enrich_span_with_tags(&mut span, details);
 
             track_span(db, key, span);
         } else if message.eq_ignore_ascii_case("opentracing:frontend_http_request") {
@@ -69,7 +71,7 @@ pub fn handle_notify(
             //
             let extractor = &KVListExtractor(details);
             let context = propagator.extract(extractor);
-            let tracer = global::tracer("my_service");
+            let tracer = global::tracer(SERVICE_NAME);
             let mut span = if context.has_active_span() {
                 log::info!("Active span detected!");
                 tracer.start_with_context("frontend_http_request", &context)
@@ -78,7 +80,7 @@ pub fn handle_notify(
                 tracer.start("frontend_http_request")
             };
 
-            fill_span_with_tags(&mut span, details);
+            enrich_span_with_tags(&mut span, details);
 
             log::info!("Span context {:?}", &span.span_context());
             let injector = &mut ActionInjector(&mut actions);
@@ -105,11 +107,11 @@ fn track_span(db: &OtelContext, key: String, span: BoxedSpan) {
 fn end_span(db: &OtelContext, key: &String) {
     let mut db = db.lock().unwrap();
     if let Some(ctx) = db.remove(key) {
-        log::debug!("otel/frame discarding key {}", key);
+        log::info!("otel/frame discarding span [{}]", key);
         let mut span = ctx.span;
         span.end();
     } else {
-        log::warn!("otel/frame no span found corresponding to key {}", key);
+        log::warn!("otel/frame no span found corresponding to key [{}]", key);
     }
 }
 
@@ -123,8 +125,18 @@ impl TagAware for BoxedSpan {
     }
 }
 
-fn fill_span_with_tags<S: TagAware>(span: &mut S, details: &KVList) {
-    let tags = extract_tags(details);
+fn unknown_tag_extra(dst: &mut PropLists<String>, key: &String, value: &TypedData) {
+    if key == "id" {
+        let raw = value.to_string();
+        dst.push("server.tx_id", raw.to_owned());
+        if let Some(index) = raw.find(":") {
+            dst.push("server.name", format!("{}", &raw[..index]));
+        }
+    }
+}
+
+fn enrich_span_with_tags<S: TagAware>(span: &mut S, details: &KVList) {
+    let tags = extract_tags(details, unknown_tag_extra);
     for (k, v) in tags {
         let attr = Key::new(k.to_owned()).string(v);
         span.set_tag(attr);
@@ -156,7 +168,10 @@ impl TypedData {
     }
 }
 
-fn extract_tags(details: &KVList) -> PropLists<String> {
+fn extract_tags(
+    details: &KVList,
+    unknown_tag: fn(&mut PropLists<String>, &String, &TypedData),
+) -> PropLists<String> {
     let mut props = PropLists::new();
 
     let mut tag_name: Option<String> = None;
@@ -171,6 +186,8 @@ fn extract_tags(details: &KVList) -> PropLists<String> {
             }
             if k == "tag" {
                 tag_name = Some(v.to_string());
+            } else {
+                unknown_tag(&mut props, k, v)
             }
         }
         // append only if within tag
@@ -236,10 +253,19 @@ impl<'a> Injector for ActionInjector<'a> {
     }
 }
 
+impl TagAware for PropLists<String> {
+    fn set_tag(&mut self, attr: KeyValue) {
+        self.push(&attr.key.to_string(), attr.value.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
+
+    fn unknown_tag_noop(_dst: &mut PropLists<String>, _key: &String, _value: &TypedData) {}
 
     fn sample_kv_list() -> KVList {
         let details = &mut KVList::new();
@@ -272,9 +298,24 @@ mod tests {
     #[test]
     fn test_extract_tags() {
         let details = sample_kv_list();
-        let tags = extract_tags(&details);
+        let tags = extract_tags(&details, unknown_tag_noop);
         assert_eq!(tags.first("http.method"), Some(&"GET".to_string()));
         assert_eq!(tags.first("http.url"), Some(&"/".to_string()));
         assert_eq!(tags.first("http.version"), Some(&"HTTP/1.1".to_string()));
+        assert_eq!(tags.len(), 3);
+    }
+
+    #[test]
+    fn test_enrich_span_with_tags() {
+        let details = sample_kv_list();
+        let mut tags: PropLists<String> = PropLists::new();
+        enrich_span_with_tags(&mut tags, &details);
+        assert_eq!(tags.first("http.method"), Some(&"GET".to_string()));
+        assert_eq!(tags.first("http.url"), Some(&"/".to_string()));
+        assert_eq!(tags.first("http.version"), Some(&"HTTP/1.1".to_string()));
+        assert_eq!(tags.first("http.version"), Some(&"HTTP/1.1".to_string()));
+        assert_eq!(tags.first("server.tx_id"), Some(&"haproxy-2:d9e05a62-79e4-4457-967d-a129ea6cf6c3:0008".to_string()));
+        assert_eq!(tags.first("server.name"), Some(&"haproxy-2".to_string()));
+        assert_eq!(tags.len(), 5);
     }
 }

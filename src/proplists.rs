@@ -13,6 +13,10 @@ impl<T> PropLists<T> {
     pub fn push(&mut self, key: &str, value: T) {
         self.0.push((key.to_string(), value));
     }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl<T> IntoIterator for PropLists<T> {
