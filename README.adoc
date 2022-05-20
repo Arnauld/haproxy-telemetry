@@ -147,6 +147,18 @@ deactivate HAProxy
   +------------+             +-------------+
 ....
 
+Testing URL:
+
+[source, bash]
+....
+curl -s -v -H "X-Tok: RE" http://localhost:7001/
+curl -s -v -H "X-Tok: RE" http://localhost:7002/
+curl -s -v -H "X-Tok: RE" http://localhost:7001/haproxy-1/deny
+curl -s -v -H "X-Tok: RE" http://localhost:7001/haproxy-2/deny
+curl -s -v -H "X-Tok: RE" http://localhost:7001/haproxy-1/no-backend
+curl -s -v -H "X-Tok: RE" http://localhost:7001/haproxy-2/no-backend
+....
+
 ### Start local setup
 
 Start local `haproxy` + `fake-server` + `jaeger`
