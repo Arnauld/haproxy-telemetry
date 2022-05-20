@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // info - only shows access logs.
         env::set_var("RUST_LOG", "haproxy_spoa_rust=debug");
     }
-    pretty_env_logger::init();
+    pretty_env_logger::init_timed();
 
     let port = match env::var("PORT") {
         Ok(v) => v.parse::<u32>(),
