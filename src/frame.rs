@@ -37,11 +37,63 @@ pub enum Frame {
     },
     AgentDisconnect {
         header: FrameHeader,
+        content: KVList,
     },
     Ack {
         header: FrameHeader,
         actions: Vec<Action>,
     },
+}
+
+#[derive(IntoPrimitive, TryFromPrimitive, PartialEq, Eq, Clone, Debug)]
+#[repr(u32)]
+#[allow(non_camel_case_types)]
+pub enum StatusCode {
+    // normal (no error occurred)
+    NORMAL = 0,
+    // I/O error
+    IO_ERROR = 1,
+    // A timeout occurred
+    TIMEOUT = 2,
+    // frame is too big
+    FRAME_TOO_BIG = 3,
+    // invalid frame received
+    INVALID_FRAME_RECEIVED = 4,
+    // version value not found
+    VERSION_VALUE_NOT_FOUND = 5,
+    // max-frame-size value not found
+    MAX_FRAME_SIZE_VALUE_NOT_FOUND = 6,
+    // capabilities value not found
+    CAPABILITIES_VALUE_NOT_FOUND = 7,
+    // unsupported version
+    UNSUPPORTED_VERSION = 8,
+    // max-frame-size too big or too small
+    MAX_FRAME_SIZE_TOO_BIG_OR_TOO_SMALL = 9,
+    // payload fragmentation is not supported
+    PAYLOAD_FRAGMENTATION_IS_NOT_SUPPORTED = 10,
+    // invalid interlaced frames
+    INVALID_INTERLACED_FRAMES = 11,
+    // frame-id not found (it does not match any referenced frame)
+    FRAME_ID_NOT_FOUND = 12,
+    // resource allocation error
+    RESOURCE_ALLOCATION_ERROR = 13,
+    // an unknown error occurred
+    UNKNOWN_ERROR = 99,
+}
+
+impl Frame {
+    pub fn new_agent_disconnect(status_code: StatusCode, message: String) -> Frame {
+        let mut content = KVList::new();
+        content.push((
+            "status-code".to_string(),
+            TypedData::UINT32(status_code.into()),
+        ));
+        content.push(("message".to_string(), TypedData::STRING(message)));
+        Frame::AgentDisconnect {
+            header: FrameHeader::agent_disconnect(),
+            content,
+        }
+    }
 }
 
 #[derive(IntoPrimitive, TryFromPrimitive, PartialEq, Eq, Clone, Debug)]
@@ -112,6 +164,15 @@ impl FrameHeader {
             stream_id: self.stream_id,
             flags: FrameFlags::new(true, false),
             r#type: frame_type.to_owned(),
+        }
+    }
+
+    pub fn agent_disconnect() -> FrameHeader {
+        FrameHeader {
+            frame_id: 0,
+            stream_id: 0,
+            flags: FrameFlags::new(true, false),
+            r#type: FrameType::AGENT_DISCONNECT,
         }
     }
 }
@@ -354,6 +415,11 @@ impl Frame {
                 write_list_of_actions(dst, actions).unwrap();
                 Ok(())
             }
+            Frame::AgentDisconnect { header, content } => {
+                write_frame_header(dst, header).unwrap();
+                write_kv_list(dst, content).unwrap();
+                Ok(())
+            }
             _ => Err(Error::NotSupported),
         }
     }
@@ -367,7 +433,7 @@ impl Frame {
                 messages: _,
             } => header,
             Frame::AgentHello { header, content: _ } => header,
-            Frame::AgentDisconnect { header } => header,
+            Frame::AgentDisconnect { header, content: _ } => header,
             Frame::Ack { header, actions: _ } => header,
         }
     }
@@ -395,6 +461,13 @@ pub fn parse_frame_payload(
         FrameType::HAPROXY_DISCONNECT => {
             let body = parse_kv_list(src).map_err(|err| FramePayloadError::InvalidKVList(err))?;
             Ok(Frame::HAProxyDisconnect {
+                header: frame_header.to_owned(),
+                content: body,
+            })
+        }
+        FrameType::AGENT_DISCONNECT => {
+            let body = parse_kv_list(src).map_err(|err| FramePayloadError::InvalidKVList(err))?;
+            Ok(Frame::AgentDisconnect {
                 header: frame_header.to_owned(),
                 content: body,
             })

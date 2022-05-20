@@ -314,7 +314,10 @@ mod tests {
         assert_eq!(tags.first("http.url"), Some(&"/".to_string()));
         assert_eq!(tags.first("http.version"), Some(&"HTTP/1.1".to_string()));
         assert_eq!(tags.first("http.version"), Some(&"HTTP/1.1".to_string()));
-        assert_eq!(tags.first("server.tx_id"), Some(&"haproxy-2:d9e05a62-79e4-4457-967d-a129ea6cf6c3:0008".to_string()));
+        assert_eq!(
+            tags.first("server.tx_id"),
+            Some(&"haproxy-2:d9e05a62-79e4-4457-967d-a129ea6cf6c3:0008".to_string())
+        );
         assert_eq!(tags.first("server.name"), Some(&"haproxy-2".to_string()));
         assert_eq!(tags.len(), 5);
     }

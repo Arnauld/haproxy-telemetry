@@ -2,7 +2,7 @@ use std::env;
 use tokio::net::{TcpListener, TcpStream};
 
 pub use connection::Connection;
-use frame::{Action, Error, Frame, FrameHeader, FrameType, KVList, ListOfMessages, TypedData};
+use frame::{Action, Error, Frame, FrameHeader, FrameType, KVList, ListOfMessages, TypedData, StatusCode};
 
 mod connection;
 mod frame;
@@ -108,7 +108,7 @@ fn handle_frame(
         Frame::HAProxyDisconnect {
             header: _,
             content: _,
-        } => Err(Error::Disconnect),
+        } => Ok(Frame::new_agent_disconnect(StatusCode::NORMAL, "bye!".to_string())),
         _ => Err(Error::NotSupported),
     }
 }
@@ -126,11 +126,14 @@ async fn process(socket: TcpStream, otel_ctx: OtelContext, notify_handler: Notif
                 Ok(response) => {
                     log::debug!("Response {:?}", response);
                     connection.write_frame(&response).await.unwrap();
-                }
-                Err(Error::Disconnect) => {
-                    log::info!("Disconnecting");
-                    // break the loop
-                    return;
+                    match response {
+                        Frame::AgentDisconnect { header:_, content:_ } => {
+                            log::info!("Disconnecting");
+                            // break the loop
+                            return;
+                        }
+                        _ => {}
+                    }
                 }
                 Err(err) => {
                     log::error!("ERROR: {:?}", err);
